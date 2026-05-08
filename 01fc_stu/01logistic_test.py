@@ -5,8 +5,15 @@ import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.datasets import make_moons
 
-# 设置字体为SimHei（黑体）
-plt.rcParams['font.sans-serif'] = ['SimHei']
+# 设置字体（兼容macOS和Windows）
+import platform
+system_name = platform.system()
+if system_name == 'Darwin':  # macOS
+    plt.rcParams['font.sans-serif'] = ['Arial Unicode MS', 'Heiti TC', 'PingFang HK', 'STHeiti']
+elif system_name == 'Windows':
+    plt.rcParams['font.sans-serif'] = ['SimHei']
+else:  # Linux
+    plt.rcParams['font.sans-serif'] = ['WenQuanYi Micro Hei', 'DejaVu Sans']
 # 解决坐标轴负号显示问题
 plt.rcParams['axes.unicode_minus'] = False
 
