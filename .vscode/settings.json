@@ -1,0 +1,4 @@
+{
+    "python.defaultInterpreterPath": "/home/kgg/miniconda3/envs/stu_ai/bin/python",
+    "python.terminal.activateEnvironment": true
+}
