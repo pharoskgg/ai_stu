@@ -5,6 +5,11 @@ import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.datasets import make_moons
 
+# 设置字体为SimHei（黑体）
+plt.rcParams['font.sans-serif'] = ['SimHei']
+# 解决坐标轴负号显示问题
+plt.rcParams['axes.unicode_minus'] = False
+
 # 设置随机种子，保证结果可复现
 np.random.seed(42)
 
@@ -217,14 +222,14 @@ def plot_decision_boundary(X_data, Y_data, W, b, title=""):
 # 绘制训练集结果
 plt1 = plot_decision_boundary(X_train, Y_train, W, b,
                               f"训练集决策边界 (准确率: {train_acc * 100:.1f}%)")
-plt1.savefig("/home/kgg/01workstation/03ai/06ai_stu/01fc_stu/02backward/train_boundary.png")
+plt1.savefig("train_boundary.png")
 plt1.show()
 print("已保存: train_boundary.png")
 
 # 绘制测试集结果
 plt2 = plot_decision_boundary(X_test, Y_test, W, b,
                               f"测试集决策边界 (准确率: {test_acc * 100:.1f}%)")
-plt2.savefig("/home/kgg/01workstation/03ai/06ai_stu/01fc_stu/02backward/test_boundary.png")
+plt2.savefig("test_boundary.png")
 plt2.show()
 print("已保存: test_boundary.png")
 
@@ -236,7 +241,7 @@ plt.ylabel("损失值 (Loss)")
 plt.title("损失函数随训练下降曲线")
 plt.grid(True)
 plt.tight_layout()
-plt.savefig("/home/kgg/01workstation/03ai/06ai_stu/01fc_stu/02backward/loss_curve.png")
+plt.savefig(r"loss_curve.png")
 plt.show()
 print("已保存: loss_curve.png")
 
