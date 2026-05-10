@@ -148,9 +148,18 @@ def backward_propagation(X, Y, W2, z1, a1, a2, activation='tanh'):
 
     return dw1, db1, dw2, db2
 
-loop = 100000
+def predict(X, w1, b1, w2, b2, activation='tanh'):
+    _, _, A = forward_propagation(X, w1, b1, w2, b2, activation=activation)
+    return (A >= 0.5).astype(int)
+
+def accuracy(Y_pre, Y_ture):
+    return np.mean(Y_pre == Y_ture)
+
+loop = 8000
 loss_history = []
-learn_rate = 0.04  # 提高学习率
+train_acc_history = []
+test_acc_history = []
+learn_rate = 0.4  # 提高学习率
 
 # 设置激活函数 (可选: 'sigmoid', 'tanh', 'relu')
 activation_type = 'tanh'
@@ -171,21 +180,74 @@ for i in range(loop):
 
     if i % 100 == 0:
         loss_history.append(loss)
-        print(f"Iteration {i}, Loss: {loss:.6f}")
+        
+        # 计算训练集准确率
+        Y_pred_train_temp = predict(X_train, w1, b1, w2, b2, activation=activation_type)
+        train_acc = accuracy(Y_pred_train_temp, Y_train)
+        train_acc_history.append(train_acc)
+        
+        # 计算测试集准确率
+        Y_pred_test_temp = predict(X_test, w1, b1, w2, b2, activation=activation_type)
+        test_acc = accuracy(Y_pred_test_temp, Y_test)
+        test_acc_history.append(test_acc)
+        
+        print(f"Iteration {i}, Loss: {loss:.6f}, Train Acc: {train_acc:.4f}, Test Acc: {test_acc:.4f}")
 
 # print(w1, b1, w2, b2)
 
-def predict(X, w1, b1, w2, b2, activation='tanh'):
-    _, _, A = forward_propagation(X, w1, b1, w2, b2, activation=activation)
-    return (A >= 0.5).astype(int)
-
-def accuracy(Y_pre, Y_ture):
-    return np.mean(Y_pre == Y_ture)
-
 Y_pred_test = predict(X_test, w1, b1, w2, b2, activation=activation_type)
 test_acc = accuracy(Y_pred_test, Y_test)
-print("测试集的准确率:{:.2f}%".format(test_acc * 100))
+print("\n最终测试集的准确率:{:.2f}%".format(test_acc * 100))
 
 Y_pred_train = predict(X_train, w1, b1, w2, b2, activation=activation_type)
 train_acc = accuracy(Y_pred_train, Y_train)
-print("训练集的准确率:{:.2f}%".format(train_acc * 100))
+print("最终训练集的准确率:{:.2f}%".format(train_acc * 100))
+
+# ==================== 4. 可视化 ====================
+# 创建包含两个子图的画布
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+
+# --- 左图: Loss和准确率曲线 ---
+iterations = list(range(0, loop, 100))
+
+ax1.plot(iterations, loss_history, 'r-', linewidth=2, label='Loss')
+ax1.plot(iterations, train_acc_history, 'b-', linewidth=2, label='Train Accuracy')
+ax1.plot(iterations, test_acc_history, 'g-', linewidth=2, label='Test Accuracy')
+ax1.set_xlabel('Iteration', fontsize=12)
+ax1.set_ylabel('Value', fontsize=12)
+ax1.set_title('Training Progress', fontsize=14, fontweight='bold')
+ax1.legend(loc='best', fontsize=10)
+ax1.grid(True, alpha=0.3)
+ax1.set_xlim([0, loop])
+
+# --- 右图: 决策边界可视化 ---
+def plot_decision_boundary(X, Y, w1, b1, w2, b2, ax, activation='tanh'):
+    """绘制决策边界"""
+    # 获取数据范围
+    x_min, x_max = X[0, :].min() - 0.5, X[0, :].max() + 0.5
+    y_min, y_max = X[1, :].min() - 0.5, X[1, :].max() + 0.5
+    
+    # 生成网格点
+    xx, yy = np.meshgrid(np.arange(x_min, x_max, 0.02),
+                         np.arange(y_min, y_max, 0.02))
+    
+    # 预测每个网格点
+    grid_points = np.c_[xx.ravel(), yy.ravel()].T
+    predictions = predict(grid_points, w1, b1, w2, b2, activation=activation)
+    predictions = predictions.reshape(xx.shape)
+    
+    # 绘制决策边界
+    ax.contourf(xx, yy, predictions, cmap=plt.cm.RdBu, alpha=0.3)
+    ax.scatter(X[0, :], X[1, :], c=Y[0, :], cmap=plt.cm.RdBu, edgecolors='k', s=30)
+    ax.set_xlabel('Feature 1', fontsize=12)
+    ax.set_ylabel('Feature 2', fontsize=12)
+    ax.set_title('Decision Boundary', fontsize=14, fontweight='bold')
+    ax.set_xlim([x_min, x_max])
+    ax.set_ylim([y_min, y_max])
+
+plot_decision_boundary(X_train, Y_train, w1, b1, w2, b2, ax2, activation=activation_type)
+
+plt.tight_layout()
+plt.show()
+plt.savefig('neural_network_results.png', dpi=150, bbox_inches='tight')
+print("\n图像已保存为 neural_network_results.png")
