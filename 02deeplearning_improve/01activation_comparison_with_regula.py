@@ -86,25 +86,35 @@ def forward_propagation(X, w1, b1, w2, b2, activation='tanh'):
 
     return z1, a1, a2
 
-def logistic_loss(A, Y):
-    """逻辑回归损失函数"""
+def logistic_loss(A, Y, W1, W2, _lambda=0):
+    """逻辑回归损失函数（带L2正则化）"""
     m = Y.shape[1]
     epsilon = 1e-8
-    return -(1 / m) * np.sum(Y * np.log(A + epsilon) + (1 - Y) * np.log(1 - A + epsilon))
+    
+    # 交叉熵损失
+    cross_entropy = -(1 / m) * np.sum(Y * np.log(A + epsilon) + (1 - Y) * np.log(1 - A + epsilon))
+    
+    # L2正则化项
+    if _lambda > 0:
+        l2_cost = (_lambda / (2 * m)) * (np.sum(W1 ** 2) + np.sum(W2 ** 2))
+        return cross_entropy + l2_cost
+    
+    return cross_entropy
 
-def backward_propagation(X, Y, W2, z1, a1, a2, activation='tanh'):
-    """反向传播"""
+def backward_propagation(X, Y, W1, W2, z1, a1, a2, activation='tanh', _lambda=0):
+    """反向传播（带L2正则化）"""
     act_deriv = ACTIVATION_FUNCTIONS[activation]['deriv']
     m = X.shape[1]
 
+    # 输出层梯度
     dz2 = a2 - Y
-    dw2 = (1 / m) * np.dot(a1, dz2.T)
+    dw2 = (1 / m) * np.dot(a1, dz2.T) + (_lambda / m) * W2  # L2正则化梯度
     db2 = (1 / m) * np.sum(dz2, axis=1, keepdims=True)
     
+    # 隐藏层梯度
     act_derivative = act_deriv(a1)
     dz1 = np.dot(W2, dz2) * act_derivative
-
-    dw1 = (1 / m) * np.dot(X, dz1.T)
+    dw1 = (1 / m) * np.dot(X, dz1.T) + (_lambda / m) * W1  # L2正则化梯度
     db1 = (1 / m) * np.sum(dz1, axis=1, keepdims=True)
 
     return dw1, db1, dw2, db2
@@ -123,6 +133,7 @@ def train_neural_network(X_train, Y_train, X_test, Y_test, activation_type, loop
     np.random.seed(42)  # 确保每次训练使用相同的初始权重
     
     n_features = X_train.shape[0]
+    _lambda = 0.001  # L2正则化强度
     
     # 初始化参数
     w1 = np.random.randn(n_features, h) * 0.01
@@ -140,10 +151,11 @@ def train_neural_network(X_train, Y_train, X_test, Y_test, activation_type, loop
     
     for i in range(loop):
         z1, a1, a2 = forward_propagation(X_train, w1, b1, w2, b2, activation=activation_type)
-        loss = logistic_loss(a2, Y_train)
+        loss = logistic_loss(a2, Y_train, w1, w2, _lambda)  # 传入权重和正则化参数
         
-        dw1, db1, dw2, db2 = backward_propagation(X_train, Y_train, w2, z1, a1, a2, activation=activation_type)
+        dw1, db1, dw2, db2 = backward_propagation(X_train, Y_train, w1, w2, z1, a1, a2, activation=activation_type, _lambda=_lambda)
         
+        # 标准梯度下降更新（dw已经包含了正则化项）
         w1 = w1 - learn_rate * dw1
         b1 = b1 - learn_rate * db1
         w2 = w2 - learn_rate * dw2
@@ -200,8 +212,8 @@ def plot_decision_boundary(X, Y, w1, b1, w2, b2, ax, activation='tanh', title='D
     ax.set_xlim([x_min, x_max])
     ax.set_ylim([y_min, y_max])
 
-loop_count = 20000
-lear_rate=0.4
+loop_count = 40000
+lear_rate=0.08
 # ==================== 4. 训练三种激活函数 ====================
 activation_types = ['relu', 'leaky_relu', 'tanh', 'sigmoid']
 results = {}
