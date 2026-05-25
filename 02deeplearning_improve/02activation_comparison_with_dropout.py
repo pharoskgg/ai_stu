@@ -72,19 +72,28 @@ ACTIVATION_FUNCTIONS = {
 
 
 # ==================== 3. 神经网络核心函数 ====================
-def forward_propagation(X, w1, b1, w2, b2, activation='tanh'):
-    """前向传播"""
+def forward_propagation(X, w1, b1, w2, b2, activation='tanh', keep_prob=1.0):
+    """前向传播
+    keep_prob=1.0 表示不使用dropout（测试时默认关闭）
+    """
     act_func = ACTIVATION_FUNCTIONS[activation]['func']
-    
+
     # 隐藏层
     z1 = np.dot(w1.T, X) + b1
     a1 = act_func(z1)
 
-    # 输出层
+    # Dropout（仅隐藏层，keep_prob < 1 时启用）
+    D1 = None
+    if keep_prob < 1.0:
+        D1 = np.random.rand(a1.shape[0], a1.shape[1]) < keep_prob
+        a1 *= D1
+        a1 /= keep_prob
+
+    # 输出层（不做dropout）
     z2 = np.dot(w2.T, a1) + b2
     a2 = sigmoid(z2)
 
-    return z1, a1, a2
+    return z1, a1, a2, D1
 
 def logistic_loss(A, Y):
     """逻辑回归损失函数"""
@@ -92,17 +101,23 @@ def logistic_loss(A, Y):
     epsilon = 1e-8
     return -(1 / m) * np.sum(Y * np.log(A + epsilon) + (1 - Y) * np.log(1 - A + epsilon))
 
-def backward_propagation(X, Y, W2, z1, a1, a2, activation='tanh'):
-    """反向传播"""
+def backward_propagation(X, Y, W2, z1, a1, a2, activation='tanh', D1=None, keep_prob=1.0):
+    """反向传播
+    D1: 前向传播生成的dropout掩码，用于屏蔽被杀死神经元的梯度
+    """
     act_deriv = ACTIVATION_FUNCTIONS[activation]['deriv']
     m = X.shape[1]
 
     dz2 = a2 - Y
     dw2 = (1 / m) * np.dot(a1, dz2.T)
     db2 = (1 / m) * np.sum(dz2, axis=1, keepdims=True)
-    
+
     act_derivative = act_deriv(a1)
     dz1 = np.dot(W2, dz2) * act_derivative
+
+    # Dropout梯度：被杀死的神经元梯度归零
+    if D1 is not None:
+        dz1 *= D1 / keep_prob
 
     dw1 = (1 / m) * np.dot(X, dz1.T)
     db1 = (1 / m) * np.sum(dz1, axis=1, keepdims=True)
@@ -110,8 +125,8 @@ def backward_propagation(X, Y, W2, z1, a1, a2, activation='tanh'):
     return dw1, db1, dw2, db2
 
 def predict(X, w1, b1, w2, b2, activation='tanh'):
-    """预测函数"""
-    _, _, A = forward_propagation(X, w1, b1, w2, b2, activation=activation)
+    """预测函数（关闭dropout）"""
+    _, _, A, _ = forward_propagation(X, w1, b1, w2, b2, activation=activation, keep_prob=1.0)
     return (A >= 0.5).astype(int)
 
 def accuracy(Y_pre, Y_true):
@@ -139,10 +154,10 @@ def train_neural_network(X_train, Y_train, X_test, Y_test, activation_type, loop
     print(f"{'='*60}")
     
     for i in range(loop):
-        z1, a1, a2 = forward_propagation(X_train, w1, b1, w2, b2, activation=activation_type)
+        z1, a1, a2, D1 = forward_propagation(X_train, w1, b1, w2, b2, activation=activation_type, keep_prob=0.8)
         loss = logistic_loss(a2, Y_train)
-        
-        dw1, db1, dw2, db2 = backward_propagation(X_train, Y_train, w2, z1, a1, a2, activation=activation_type)
+
+        dw1, db1, dw2, db2 = backward_propagation(X_train, Y_train, w2, z1, a1, a2, activation=activation_type, D1=D1, keep_prob=0.8)
         
         w1 = w1 - learn_rate * dw1
         b1 = b1 - learn_rate * db1
