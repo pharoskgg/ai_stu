@@ -117,3 +117,103 @@ $$w := (1 - \frac{\alpha\lambda}{m})w - \alpha\frac{\partial J}{\partial w}$$
 - 抑制大权重值
 - 使模型更简单平滑
 - λ越大，正则化越强
+
+
+#### 原因
+正则化λ设置得足够大，权重矩阵W被设置为接近于0的值，就是把多隐层单元的权重设为0，于是基本上消除了那些隐藏单元的许多影响。这种情况下，复杂神经网络就被简化成很小的网络，同时深度很大，它会使这个网络从过拟合的状态更接近于左图的高偏差状态。但是λ有个中间值，使得接近“just right”的中间状态。因此，选择合适大小的λ值，就能够同时避免高偏差（high bias）和高方差（high variance），得到最佳模型。
+
+### 1.5 Dropout 随机失活
+
+当网络过拟合时，dropout 按概率随机"杀死"部分神经元，使网络不依赖某些特定神经元，从而降低过拟合。
+
+#### 代码实现（Inverted Dropout）
+
+```python
+# 第1步：生成随机掩码，keep_prob 为保留概率
+d3 = np.random.rand(a3.shape[0], a3.shape[1]) < keep_prob
+
+# 第2步：置零被杀死的神经元
+a3 = np.multiply(a3, d3)  # 等价于 a3 *= d3
+
+# 第3步：除以 keep_prob，修正期望值
+a3 /= keep_prob
+```
+
+#### 为什么要除以 keep_prob？
+
+dropout 置零了一部分神经元，**输出期望缩小了**。除以 `keep_prob` 是为了把期望修正回原来的水平。
+
+| 场景 | 期望输出 |
+|------|---------|
+| 不做 dropout | E[a] = Σaᵢ |
+| dropout 不除回来 | E[a] = keep_prob × Σaᵢ（缩小了） |
+| dropout 除回来 | E[a] = keep_prob × Σaᵢ / keep_prob = Σaᵢ（不变） |
+
+举例：4个神经元输出 [2, 4, 6, 8]，keep_prob = 0.5
+
+- 不做 dropout：总和 = 20
+- dropout 不除回来：平均杀掉一半，期望总和 = 20 × 0.5 = 10
+- dropout 除回来：期望总和 = 10 / 0.5 = 20，和原来一致
+
+#### 为什么测试时不做 dropout？
+
+测试时所有神经元都保留，输出本身就是 Σaᵢ。训练时已经除回来了，数值尺度天然一致，测试代码无需任何额外处理。
+
+#### 梯度计算需要改变吗？
+
+不需要。`mask / keep_prob` 是前向计算图的一部分，反向传播时链式法则自动处理。
+
+**前向：**
+
+```
+a_drop = a ⊙ mask / keep_prob
+```
+
+**反向链式推导：**
+
+```
+∂L     ∂L        ∂a_drop
+─── = ────── · ────────
+∂a     ∂a_drop      ∂a
+
+∂L        ∂a_drop
+───── = dz_drop · ────────
+∂a               ∂a
+
+∂a_drop/∂a = mask / keep_prob    （常数因子，不随 a 变化）
+
+∴ da = dz_drop · mask / keep_prob
+```
+
+`mask / keep_prob` 在前向时已经确定，反向时直接乘上去即可，**无需手动修改任何梯度公式**。
+
+#### dW 会包含 keep_prob 吗？
+
+会，但不需要手动加。假设第3层做了 dropout，第4层是输出层：
+
+**前向：**
+
+```
+a3_drop = a3 ⊙ mask / keep_prob
+z4 = W4^T · a3_drop + b4
+```
+
+**dW4 推导：**
+
+```
+dW4 = ∂L/∂W4
+    = ∂L/∂z4 · ∂z4/∂W4
+    = dz4 · a3_drop^T
+    = dz4 · (a3 ⊙ mask / keep_prob)^T
+    = dz4 · (a3 ⊙ mask)^T / keep_prob
+```
+
+keep_prob 通过 a3_drop 间接进入了 dW4，链式法则自动带入，无需手动处理。
+
+**各参数与 keep_prob 的关系：**
+
+| 参数 | 推导式 | keep_prob 来源 |
+|------|--------|---------------|
+| da3 | dz4 · W4 ⊙ mask / keep_prob | 直接包含 |
+| dW4 | dz4 · a3_drop^T | 通过 a3_drop 间接包含 |
+| db4 | Σ(dz4) | 不包含（与 a3_drop 无关） |
