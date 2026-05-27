@@ -217,3 +217,6 @@ keep_prob 通过 a3_drop 间接进入了 dW4，链式法则自动带入，无需
 | da3 | dz4 · W4 ⊙ mask / keep_prob | 直接包含 |
 | dW4 | dz4 · a3_drop^T | 通过 a3_drop 间接包含 |
 | db4 | Σ(dz4) | 不包含（与 a3_drop 无关） |
+
+#### 理解dropout
+dropout 是一种 prevent overfitting 的方法，通过随机“杀死”部分神经元，使网络不依赖某些特定神经元，从而降低过拟合。
