@@ -21,8 +21,32 @@ Y_train, Y_test = Y[:split_idx], Y[split_idx:]
 # 转置为 (特征数, 样本数)
 X_train = X_train.T  # (2, 480)
 Y_train = Y_train.reshape(1, -1)  # (1, 480)
+
+# ==================== 数据归一化（重要：避免数据泄露）====================
+# ⚠️  数据泄露风险说明：
+# 如果分别计算训练集和测试集的统计量（均值、标准差），会导致信息泄露问题。
+# 
+# 原因解释：
+# 1. 测试集代表"未来 unseen 的数据"，在真实场景中我们无法预先知道测试集的分布
+# 2. 如果用测试集自己的统计量归一化，相当于让模型"偷看"了测试数据的分布信息
+# 3. 这会导致评估结果虚高，无法反映模型在真正新数据上的泛化能力
+# 4. 正确做法：只用训练集的统计量来归一化所有数据（包括测试集）
+# 
+# 类比：就像考试前偷看了考题答案，考试成绩会虚高，但不代表真实水平
+
+# 步骤1: 仅从训练集计算统计量（均值和标准差）
+X_train_mean = np.mean(X_train, axis=1, keepdims=True)
+X_train_std = np.std(X_train, axis=1, keepdims=True)
+
+# 步骤2: 使用训练集统计量归一化训练集
+X_train = (X_train - X_train_mean) / (X_train_std + 1e-8)
+
+# 步骤3: 转置测试集
 X_test = X_test.T  # (2, 120)
 Y_test = Y_test.reshape(1, -1)  # (1, 120)
+
+# 步骤4: 使用训练集的统计量归一化测试集（关键！不能用测试集自己的统计量）
+X_test = (X_test - X_train_mean) / (X_train_std + 1e-8)
 
 n_features, m_train = X_train.shape
 print(f"训练集: X{X_train.shape}, Y{Y_train.shape}")
