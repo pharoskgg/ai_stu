@@ -1,4 +1,6 @@
 {
-    "python.defaultInterpreterPath": "/home/kgg/miniconda3/envs/stu_ai/bin/python",
-    "python.terminal.activateEnvironment": true
+    "python.defaultInterpreterPath": "/opt/miniconda3/envs/bigmodel/bin/python",
+    "python.terminal.activateEnvironment": true,
+    "python-envs.defaultEnvManager": "ms-python.python:conda",
+    "python-envs.defaultPackageManager": "ms-python.python:conda"
 }
