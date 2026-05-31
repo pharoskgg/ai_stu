@@ -389,3 +389,33 @@ b = b - $\alpha \frac{db}{\sqrt{Sdb + \epsilon}}$
 dW^2的作用是让梯度下降时，当梯度变大时，学习率变小，当梯度变小时，学习率变大。例如：
 dw梯度等于0.1，则Sdw等于0.1^2=0.01，分母变小相当于学习率变大，同理dw梯度等于2时，Sdw等于2^2=4，分母变大相当于学习率变小。
 - 在加速时踩刹车，在减速时踩油门
+
+
+### Adam
+Adam 的核心是计算梯度的均值和方差，从而控制学习率。公式如下:
+Adam = RMSProp + Momentum
+1. 初始化 
+ - Vdw = 0, Sdw = 0, Vdb = 0, Sdb = 0
+2. 计算Momemtum指数加权平均数
+- Vdw = $\beta_1 Vdw + (1-\beta_1) dW$
+- Vdb = $\beta_1 Vdb + (1-\beta_1) db$
+3. 使用RMSProp进行更新
+- Sdw = $\beta_2 Sdw + (1-\beta_2) dW^2$
+- Sdb = $\beta_2 Sdb + (1-\beta_2) db^2$
+4. 使用Adam算法，一般要计算偏差修正
+$$
+V_{dw}^{corrected} = \frac{V_{dw}}{1 - \beta_1^t}, \quad
+V_{db}^{corrected} = \frac{V_{db}}{1 - \beta_1^t}
+$$
+
+$$
+S_{dw}^{corrected} = \frac{S_{dw}}{1 - \beta_2^t}, \quad
+S_{db}^{corrected} = \frac{S_{db}}{1 - \beta_2^t}
+$$
+
+5. 更新参数
+- W = W - $\alpha \frac{V_{dw}^{corrected}}{\sqrt{S_{dw}^{corrected} + \epsilon}}$
+- b = b - $\alpha \frac{V_{db}^{corrected}}{\sqrt{S_{db}^{corrected} + \epsilon}}$
+
+
+一般使用默认值（default value），β_1=0.9，β_2=0.999（Adam论文的作者，也就是Adam算法的发明者推荐），ε=10^-8（Adam论文的作者推荐）。然后尝试不同的学习率，看看哪个效果最好。但也可以调整β_1和β_2
