@@ -118,7 +118,7 @@ def accuracy(Y_pre, Y_true):
     """准确率计算"""
     return np.mean(Y_pre == Y_true)
 
-def train_neural_network(X_train, Y_train, X_test, Y_test, activation_type, loop=8000, learn_rate=0.4, h=4):
+def train_neural_network(X_train, Y_train, X_test, Y_test, activation_type, loop=8000, learn_rate=0.4, h=4, use_momentum=False, beta=0.9):
     """训练神经网络并返回历史记录"""
     np.random.seed(42)  # 确保每次训练使用相同的初始权重
     
@@ -129,6 +129,13 @@ def train_neural_network(X_train, Y_train, X_test, Y_test, activation_type, loop
     b1 = np.zeros((h, 1))
     w2 = np.random.randn(h, 1) * 0.01
     b2 = np.zeros((1, 1))
+    
+    # 在循环外初始化动量变量（关键！）
+    if use_momentum:
+        v_dw1 = np.zeros_like(w1)
+        v_db1 = np.zeros_like(b1)
+        v_dw2 = np.zeros_like(w2)
+        v_db2 = np.zeros_like(b2)
     
     loss_history = []
     train_acc_history = []
@@ -142,12 +149,27 @@ def train_neural_network(X_train, Y_train, X_test, Y_test, activation_type, loop
         z1, a1, a2 = forward_propagation(X_train, w1, b1, w2, b2, activation=activation_type)
         loss = logistic_loss(a2, Y_train)
         
+        # 计算梯度
         dw1, db1, dw2, db2 = backward_propagation(X_train, Y_train, w2, z1, a1, a2, activation=activation_type)
         
-        w1 = w1 - learn_rate * dw1
-        b1 = b1 - learn_rate * db1
-        w2 = w2 - learn_rate * dw2
-        b2 = b2 - learn_rate * db2
+        if use_momentum:
+            # 更新动量（持续累积，不重置）
+            v_dw1 = beta * v_dw1 + (1 - beta) * dw1
+            v_db1 = beta * v_db1 + (1 - beta) * db1
+            v_dw2 = beta * v_dw2 + (1 - beta) * dw2
+            v_db2 = beta * v_db2 + (1 - beta) * db2
+            
+            # 使用动量更新参数
+            w1 = w1 - learn_rate * v_dw1
+            b1 = b1 - learn_rate * v_db1
+            w2 = w2 - learn_rate * v_dw2
+            b2 = b2 - learn_rate * v_db2
+        else:
+            # 普通SGD更新
+            w1 = w1 - learn_rate * dw1
+            b1 = b1 - learn_rate * db1
+            w2 = w2 - learn_rate * dw2
+            b2 = b2 - learn_rate * db2
         
         if i % 100 == 0:
             loss_history.append(loss)
@@ -200,10 +222,11 @@ def plot_decision_boundary(X, Y, w1, b1, w2, b2, ax, activation='tanh', title='D
     ax.set_xlim([x_min, x_max])
     ax.set_ylim([y_min, y_max])
 
-loop_count = 20000
+loop_count = 120000
 lear_rate=0.4
 # ==================== 4. 训练三种激活函数 ====================
-activation_types = ['relu', 'leaky_relu', 'tanh', 'sigmoid']
+# activation_types = ['relu', 'leaky_relu', 'tanh', 'sigmoid']
+activation_types = ['relu', 'tanh']
 results = {}
 
 for act_type in activation_types:
@@ -212,7 +235,9 @@ for act_type in activation_types:
         activation_type=act_type,
         loop=loop_count,
         learn_rate=lear_rate,
-        h=8
+        h=4,
+        use_momentum=True,  # 启用动量算法
+        beta=0.95,
     )
 
 
