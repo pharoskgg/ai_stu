@@ -118,7 +118,8 @@ def accuracy(Y_pre, Y_true):
     """准确率计算"""
     return np.mean(Y_pre == Y_true)
 
-def train_neural_network(X_train, Y_train, X_test, Y_test, activation_type, loop=8000, learn_rate=0.4, h=4):
+def train_neural_network(X_train, Y_train, X_test, Y_test, activation_type, loop=8000, 
+                        learn_rate=0.4, h=4, use_Adam=False, beta1=0.9, beta2=0.999, epsilon=1e-8):
     """训练神经网络并返回历史记录"""
     np.random.seed(42)  # 确保每次训练使用相同的初始权重
     
@@ -129,6 +130,15 @@ def train_neural_network(X_train, Y_train, X_test, Y_test, activation_type, loop
     b1 = np.zeros((h, 1))
     w2 = np.random.randn(h, 1) * 0.01
     b2 = np.zeros((1, 1))
+    if use_Adam:
+        v_dw1 = np.zeros_like(w1)
+        v_db1 = np.zeros_like(b1)
+        v_dw2 = np.zeros_like(w2)
+        v_db2 = np.zeros_like(b2)
+        s_dw1 = np.zeros_like(w1)
+        s_db1 = np.zeros_like(b1)
+        s_dw2 = np.zeros_like(w2)
+        s_db2 = np.zeros_like(b2)
     
     loss_history = []
     train_acc_history = []
@@ -144,11 +154,40 @@ def train_neural_network(X_train, Y_train, X_test, Y_test, activation_type, loop
         
         dw1, db1, dw2, db2 = backward_propagation(X_train, Y_train, w2, z1, a1, a2, activation=activation_type)
         
-        w1 = w1 - learn_rate * dw1
-        b1 = b1 - learn_rate * db1
-        w2 = w2 - learn_rate * dw2
-        b2 = b2 - learn_rate * db2
-        
+        if use_Adam:
+            # 更新Adam变量
+            v_dw1 = beta1 * v_dw1 + (1 - beta1) * dw1
+            v_db1 = beta1 * v_db1 + (1 - beta1) * db1
+            v_dw2 = beta1 * v_dw2 + (1 - beta1) * dw2
+            v_db2 = beta1 * v_db2 + (1 - beta1) * db2
+
+            s_dw1 = beta2 * s_dw1 + (1 - beta2) * dw1 ** 2
+            s_db1 = beta2 * s_db1 + (1 - beta2) * db1 ** 2
+            s_dw2 = beta2 * s_dw2 + (1 - beta2) * dw2 ** 2
+            s_db2 = beta2 * s_db2 + (1 - beta2) * db2 ** 2
+
+            # 修正偏差
+            v_dw1_corrected = v_dw1 / (1 - beta1 ** (i + 1))
+            v_db1_corrected = v_db1 / (1 - beta1 ** (i + 1))
+            v_dw2_corrected = v_dw2 / (1 - beta1 ** (i + 1))
+            v_db2_corrected = v_db2 / (1 - beta1 ** (i + 1))
+            s_dw1_corrected = s_dw1 / (1 - beta2 ** (i + 1))
+            s_db1_corrected = s_db1 / (1 - beta2 ** (i + 1))
+            s_dw2_corrected = s_dw2 / (1 - beta2 ** (i + 1))
+            s_db2_corrected = s_db2 / (1 - beta2 ** (i + 1))
+
+            # 更新参数
+            w1 = w1 - (learn_rate / (np.sqrt(s_dw1_corrected) + epsilon)) * v_dw1_corrected
+            b1 = b1 - (learn_rate / (np.sqrt(s_db1_corrected) + epsilon)) * v_db1_corrected
+            w2 = w2 - (learn_rate / (np.sqrt(s_dw2_corrected) + epsilon)) * v_dw2_corrected
+            b2 = b2 - (learn_rate / (np.sqrt(s_db2_corrected) + epsilon)) * v_db2_corrected
+
+        else:
+            w1 = w1 - learn_rate * dw1
+            b1 = b1 - learn_rate * db1
+            w2 = w2 - learn_rate * dw2
+            b2 = b2 - learn_rate * db2
+
         if i % 100 == 0:
             loss_history.append(loss)
             
@@ -201,7 +240,7 @@ def plot_decision_boundary(X, Y, w1, b1, w2, b2, ax, activation='tanh', title='D
     ax.set_ylim([y_min, y_max])
 
 loop_count = 20000
-lear_rate=0.4
+lear_rate=0.1
 # ==================== 4. 训练三种激活函数 ====================
 activation_types = ['relu', 'leaky_relu', 'tanh', 'sigmoid']
 results = {}
@@ -212,7 +251,9 @@ for act_type in activation_types:
         activation_type=act_type,
         loop=loop_count,
         learn_rate=lear_rate,
-        h=8
+        h=8,
+        use_Adam=True  # 启用Adam优化器
+
     )
 
 
