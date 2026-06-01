@@ -1,4 +1,4 @@
-# 激活函数对比实验: ReLU vs Leaky ReLU vs Tanh
+# 激活函数对比实验: ReLU vs Leaky ReLU vs Tanh (Mini-batch SGD)
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.datasets import make_moons
@@ -118,66 +118,101 @@ def accuracy(Y_pre, Y_true):
     """准确率计算"""
     return np.mean(Y_pre == Y_true)
 
-def train_neural_network(X_train, Y_train, X_test, Y_test, activation_type, loop=8000, learn_rate=0.4, h=4):
-    """训练神经网络并返回历史记录"""
+def generate_mini_batches(X, Y, mini_batch_size, seed):
+    """将数据随机打乱后按 mini_batch_size 切分为多个 mini-batch
+
+    一轮(epoch)内每个样本只出现一次，抽过的不再放回；
+    剩余数量不足 mini_batch_size 时返回剩余数据；
+    下一轮调用时重新打乱，样本可再次被抽中。
+    """
+    np.random.seed(seed)
+    m = X.shape[1]
+    permutation = np.random.permutation(m)
+    X_shuffled = X[:, permutation]
+    Y_shuffled = Y[:, permutation]
+
+    mini_batches = []
+    num_complete = m // mini_batch_size
+    for k in range(num_complete):
+        start = k * mini_batch_size
+        end = start + mini_batch_size
+        mini_batches.append((X_shuffled[:, start:end], Y_shuffled[:, start:end]))
+
+    # 剩余不足 mini_batch_size 的样本
+    if m % mini_batch_size != 0:
+        start = num_complete * mini_batch_size
+        mini_batches.append((X_shuffled[:, start:], Y_shuffled[:, start:]))
+
+    return mini_batches
+
+def train_neural_network(X_train, Y_train, X_test, Y_test, activation_type, num_epochs=8000, learn_rate=0.4, h=4, mini_batch_size=64):
+    """训练神经网络并返回历史记录（Mini-batch SGD, epoch遍历式）"""
     np.random.seed(42)  # 确保每次训练使用相同的初始权重
-    
+
     n_features = X_train.shape[0]
-    
+
     # 初始化参数
     w1 = np.random.randn(n_features, h) * 0.01
     b1 = np.zeros((h, 1))
     w2 = np.random.randn(h, 1) * 0.01
     b2 = np.zeros((1, 1))
-    
+
     loss_history = []
     train_acc_history = []
     test_acc_history = []
-    
+    step = 0  # 记录总迭代步数
+
     print(f"\n{'='*60}")
-    print(f"训练激活函数: {activation_type}")
+    print(f"训练激活函数: {activation_type} (mini_batch_size={mini_batch_size})")
     print(f"{'='*60}")
-    
-    for i in range(loop):
-        z1, a1, a2 = forward_propagation(X_train, w1, b1, w2, b2, activation=activation_type)
-        loss = logistic_loss(a2, Y_train)
-        
-        dw1, db1, dw2, db2 = backward_propagation(X_train, Y_train, w2, z1, a1, a2, activation=activation_type)
-        
-        w1 = w1 - learn_rate * dw1
-        b1 = b1 - learn_rate * db1
-        w2 = w2 - learn_rate * dw2
-        b2 = b2 - learn_rate * db2
-        
-        if i % 100 == 0:
-            loss_history.append(loss)
-            
-            Y_pred_train = predict(X_train, w1, b1, w2, b2, activation=activation_type)
-            train_acc = accuracy(Y_pred_train, Y_train)
-            train_acc_history.append(train_acc)
-            
-            Y_pred_test = predict(X_test, w1, b1, w2, b2, activation=activation_type)
-            test_acc = accuracy(Y_pred_test, Y_test)
-            test_acc_history.append(test_acc)
-            
-            if i % 1000 == 0:
-                print(f"Iteration {i:5d}, Loss: {loss:.6f}, Train Acc: {train_acc:.4f}, Test Acc: {test_acc:.4f}")
-    
+
+    for epoch in range(num_epochs):
+        # 每个 epoch 重新打乱并切分 mini-batch
+        mini_batches = generate_mini_batches(X_train, Y_train, mini_batch_size, seed=epoch)
+
+        for X_batch, Y_batch in mini_batches:
+            z1, a1, a2 = forward_propagation(X_batch, w1, b1, w2, b2, activation=activation_type)
+            loss = logistic_loss(a2, Y_batch)
+
+            dw1, db1, dw2, db2 = backward_propagation(X_batch, Y_batch, w2, z1, a1, a2, activation=activation_type)
+
+            w1 = w1 - learn_rate * dw1
+            b1 = b1 - learn_rate * db1
+            w2 = w2 - learn_rate * dw2
+            b2 = b2 - learn_rate * db2
+
+            if step % 50 == 0:
+                loss_history.append(loss)
+
+                Y_pred_train = predict(X_train, w1, b1, w2, b2, activation=activation_type)
+                train_acc = accuracy(Y_pred_train, Y_train)
+                train_acc_history.append(train_acc)
+
+                Y_pred_test = predict(X_test, w1, b1, w2, b2, activation=activation_type)
+                test_acc = accuracy(Y_pred_test, Y_test)
+                test_acc_history.append(test_acc)
+
+                if step % 1000 == 0:
+                    print(f"Step {step:5d} (Epoch {epoch}), Loss: {loss:.6f}, Train Acc: {train_acc:.4f}, Test Acc: {test_acc:.4f}")
+
+            step += 1
+
     # 最终准确率
     Y_pred_test = predict(X_test, w1, b1, w2, b2, activation=activation_type)
     final_test_acc = accuracy(Y_pred_test, Y_test)
     Y_pred_train = predict(X_train, w1, b1, w2, b2, activation=activation_type)
     final_train_acc = accuracy(Y_pred_train, Y_train)
-    
+
     print(f"\n最终结果 - 训练集准确率: {final_train_acc*100:.2f}%, 测试集准确率: {final_test_acc*100:.2f}%")
-    
+
     return {
         'w1': w1, 'b1': b1, 'w2': w2, 'b2': b2,
         'loss_history': loss_history,
         'train_acc_history': train_acc_history,
         'test_acc_history': test_acc_history,
         'final_train_acc': final_train_acc,
-        'final_test_acc': final_test_acc
+        'final_test_acc': final_test_acc,
+        'total_steps': step
     }
 
 def plot_decision_boundary(X, Y, w1, b1, w2, b2, ax, activation='tanh', title='Decision Boundary'):
@@ -200,45 +235,48 @@ def plot_decision_boundary(X, Y, w1, b1, w2, b2, ax, activation='tanh', title='D
     ax.set_xlim([x_min, x_max])
     ax.set_ylim([y_min, y_max])
 
-loop_count = 20000
-lear_rate=0.4
+num_epochs = 2500
+lear_rate = 0.4
+mini_batch_size = 64  # 每次随机抽取的样本数
+
 # ==================== 4. 训练三种激活函数 ====================
 activation_types = ['relu', 'leaky_relu', 'tanh', 'sigmoid']
 results = {}
 
 for act_type in activation_types:
     results[act_type] = train_neural_network(
-        X_train, Y_train, X_test, Y_test, 
+        X_train, Y_train, X_test, Y_test,
         activation_type=act_type,
-        loop=loop_count,
+        num_epochs=num_epochs,
         learn_rate=lear_rate,
-        h=8
+        h=8,
+        mini_batch_size=mini_batch_size
     )
 
 
 # ==================== 5. 可视化对比 ====================
 fig, axes = plt.subplots(len(activation_types), 2, figsize=(16, 18))
 
-# 根据实际训练轮数生成iterations
-
-iterations = list(range(0, loop_count, 100))
+# 根据实际训练步数生成iterations
+total_steps = results[activation_types[0]]['total_steps']
+iterations = list(range(0, total_steps, 50))
 
 for idx, act_type in enumerate(activation_types):
     result = results[act_type]
-    
+
     # 左图: Loss和准确率曲线
     ax1 = axes[idx, 0]
     ax1.plot(iterations, result['loss_history'], 'r-', linewidth=2, label='Loss')
     ax1.plot(iterations, result['train_acc_history'], 'b-', linewidth=2, label='Train Accuracy')
     ax1.plot(iterations, result['test_acc_history'], 'g-', linewidth=2, label='Test Accuracy')
-    ax1.set_xlabel('Iteration', fontsize=10)
+    ax1.set_xlabel('Step', fontsize=10)
     ax1.set_ylabel('Value', fontsize=10)
-    ax1.set_title(f'{act_type.upper()} - Training Progress\n' + 
-                  f'Train Acc: {result["final_train_acc"]*100:.2f}%, Test Acc: {result["final_test_acc"]*100:.2f}%', 
+    ax1.set_title(f'{act_type.upper()} - Training Progress\n' +
+                  f'Train Acc: {result["final_train_acc"]*100:.2f}%, Test Acc: {result["final_test_acc"]*100:.2f}%',
                   fontsize=12, fontweight='bold')
     ax1.legend(loc='best', fontsize=8)
     ax1.grid(True, alpha=0.3)
-    ax1.set_xlim([0, loop_count])
+    ax1.set_xlim([0, total_steps])
     
     # 右图: 决策边界
     ax2 = axes[idx, 1]
@@ -252,8 +290,8 @@ for idx, act_type in enumerate(activation_types):
 
 plt.tight_layout()
 # plt.show()  # 在终端环境中注释掉，避免阻塞
-plt.savefig('activation_comparison.png', dpi=150, bbox_inches='tight')
+plt.savefig('04activation_comparison_with_minibatch.png', dpi=150, bbox_inches='tight')
 print(f"\n{'='*60}")
-print("对比图像已保存为 activation_comparison.png")
+print("对比图像已保存为 04activation_comparison_with_minibatch.png")
 print(f"{'='*60}")
 # plt.show()
