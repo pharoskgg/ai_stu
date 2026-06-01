@@ -469,5 +469,76 @@ Batch归一化的作用是它适用的归一化过程，不只是输入层（inp
 - 使这些值变得更稳定（stable），神经网络的之后层就会有更坚实的基础。即使使输入分布改变了一些，它会改变得更少。它做的是当前层保持学习，当改变时，迫使后层适应的程度减小了，你可以这样想，它减弱了前层参数的作用与后层参数的作用之间的联系，它使得网络每层都可以自己学习，稍稍独立于其它层，这有助于加速整个网络的学习。
 - 轻微正则化，如果使用minibatch，对各个隐层添加了随机噪声，batch越小，正则化效果越明显
 
+### Batch Norm 反向传播 (Backpropagation)
+
+在反向传播中，我们需要计算损失函数 $L$ 对 Batch Norm 各参数的梯度。假设我们已经从后一层得到了 $\frac{\partial L}{\partial \tilde{z}^{(i)}}$（即 $d\tilde{z}$）。
+
+
+#### 反向传播推导
+
+**步骤1：计算 $\frac{\partial L}{\partial \gamma}$ 和 $\frac{\partial L}{\partial \beta}$**
+
+$$\frac{\partial L}{\partial \gamma} = \sum_{i=1}^m \frac{\partial L}{\partial \tilde{z}^{(i)}} \cdot z_{\text{norm}}^{(i)}$$
+
+$$\frac{\partial L}{\partial \beta} = \sum_{i=1}^m \frac{\partial L}{\partial \tilde{z}^{(i)}}$$
+
+**步骤2：计算 $\frac{\partial L}{\partial z_{\text{norm}}^{(i)}}$**
+
+$$\frac{\partial L}{\partial z_{\text{norm}}^{(i)}} = \frac{\partial L}{\partial \tilde{z}^{(i)}} \cdot \gamma$$
+
+**步骤3：计算 $\frac{\partial L}{\partial \sigma^2}$**
+
+由于 $z_{\text{norm}}^{(i)}$ 依赖于 $\sigma^2$，根据链式法则：
+
+$$\frac{\partial L}{\partial \sigma^2} = \sum_{i=1}^m \frac{\partial L}{\partial z_{\text{norm}}^{(i)}} \cdot \frac{\partial z_{\text{norm}}^{(i)}}{\partial \sigma^2}$$
+
+其中：
+
+$$\frac{\partial z_{\text{norm}}^{(i)}}{\partial \sigma^2} = (z^{(i)} - \mu) \cdot \left(-\frac{1}{2}\right)(\sigma^2 + \epsilon)^{-3/2}$$
+
+因此：
+
+$$\frac{\partial L}{\partial \sigma^2} = \sum_{i=1}^m \frac{\partial L}{\partial z_{\text{norm}}^{(i)}} \cdot (z^{(i)} - \mu) \cdot \left(-\frac{1}{2}\right)(\sigma^2 + \epsilon)^{-3/2}$$
+
+**步骤4：计算 $\frac{\partial L}{\partial \mu}$**
+
+$\mu$ 通过两条路径影响损失：
+1. 直接通过 $z_{\text{norm}}^{(i)}$
+2. 通过 $\sigma^2$
+
+$$\frac{\partial L}{\partial \mu} = \sum_{i=1}^m \frac{\partial L}{\partial z_{\text{norm}}^{(i)}} \cdot \frac{\partial z_{\text{norm}}^{(i)}}{\partial \mu} + \frac{\partial L}{\partial \sigma^2} \cdot \frac{\partial \sigma^2}{\partial \mu}$$
+
+其中：
+
+$$\frac{\partial z_{\text{norm}}^{(i)}}{\partial \mu} = -\frac{1}{\sqrt{\sigma^2 + \epsilon}}$$
+
+$$\frac{\partial \sigma^2}{\partial \mu} = \frac{1}{m}\sum_{i=1}^m 2(z^{(i)} - \mu) \cdot (-1) = -\frac{2}{m}\sum_{i=1}^m (z^{(i)} - \mu)$$
+
+因此：
+
+$$\frac{\partial L}{\partial \mu} = \sum_{i=1}^m \frac{\partial L}{\partial z_{\text{norm}}^{(i)}} \cdot \left(-\frac{1}{\sqrt{\sigma^2 + \epsilon}}\right) + \frac{\partial L}{\partial \sigma^2} \cdot \left(-\frac{2}{m}\sum_{i=1}^m (z^{(i)} - \mu)\right)$$
+
+**步骤5：计算 $\frac{\partial L}{\partial z^{(i)}}$**
+
+$z^{(i)}$ 也通过三条路径影响损失：
+1. 直接通过 $z_{\text{norm}}^{(i)}$
+2. 通过 $\mu$
+3. 通过 $\sigma^2$
+
+$$\frac{\partial L}{\partial z^{(i)}} = \frac{\partial L}{\partial z_{\text{norm}}^{(i)}} \cdot \frac{\partial z_{\text{norm}}^{(i)}}{\partial z^{(i)}} + \frac{\partial L}{\partial \mu} \cdot \frac{\partial \mu}{\partial z^{(i)}} + \frac{\partial L}{\partial \sigma^2} \cdot \frac{\partial \sigma^2}{\partial z^{(i)}}$$
+
+其中：
+
+$$\frac{\partial z_{\text{norm}}^{(i)}}{\partial z^{(i)}} = \frac{1}{\sqrt{\sigma^2 + \epsilon}}$$
+
+$$\frac{\partial \mu}{\partial z^{(i)}} = \frac{1}{m}$$
+
+$$\frac{\partial \sigma^2}{\partial z^{(i)}} = \frac{2}{m}(z^{(i)} - \mu)$$
+
+最终得到：
+
+$$\frac{\partial L}{\partial z^{(i)}} = \frac{\partial L}{\partial z_{\text{norm}}^{(i)}} \cdot \frac{1}{\sqrt{\sigma^2 + \epsilon}} + \frac{\partial L}{\partial \mu} \cdot \frac{1}{m} + \frac{\partial L}{\partial \sigma^2} \cdot \frac{2}{m}(z^{(i)} - \mu)$$
+
+
 ### 测试时的Batch Norm
 求均值和方差时使用mini batch中m个样本进行计算，而不是整个样本数量。求一个样本的均值和方差无意义
