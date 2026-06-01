@@ -1,4 +1,4 @@
-# 激活函数对比实验: ReLU vs Leaky ReLU vs Tanh (Mini-batch SGD)
+# 激活函数对比实验: ReLU vs Leaky ReLU vs Tanh (Mini-batch SGD + Batch Normalization)
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.datasets import make_moons
@@ -11,7 +11,7 @@ warnings.filterwarnings('ignore')
 np.random.seed(42)
 
 # ==================== 1. 生成数据集 ====================
-X, Y = make_moons(n_samples=600, noise=0.2, random_state=42)
+X, Y = make_moons(n_samples=2000, noise=0.2, random_state=42)
 
 # 划分训练集和测试集 (80%训练, 20%测试)
 split_idx = int(0.8 * len(X))
@@ -66,25 +66,55 @@ def tanh_derivative(a):
 ACTIVATION_FUNCTIONS = {
     'relu': {'func': relu, 'deriv': relu_derivative},
     'leaky_relu': {'func': leaky_relu, 'deriv': leaky_relu_derivative},
-    'tanh': {'func': tanh, 'deriv': tanh_derivative},
-    'sigmoid': {'func': sigmoid, 'deriv': sigmoid_derivative}
+    'tanh': {'func': tanh, 'deriv': tanh_derivative}
 }
 
+# ==================== 3. Batch Normalization 辅助函数 ====================
+def batch_norm_forward(z, gamma, beta, eps=1e-8):
+    """
+    Batch Normalization 前向传播
+    """
+    mu = np.mean(z, axis=1, keepdims=True)
+    var = np.var(z, axis=1, keepdims=True)
+    sigma = np.sqrt(var + eps)
+    z_norm = (z - mu) / sigma
+    z_out = gamma * z_norm + beta
 
-# ==================== 3. 神经网络核心函数 ====================
-def forward_propagation(X, w1, b1, w2, b2, activation='tanh'):
-    """前向传播"""
+    cache = (z, mu, var, sigma, z_norm)
+    return z_out, cache
+
+def batch_norm_backward(dz_out, cache, gamma, eps=1e-8):
+    """
+    Batch Normalization 反向传播（修正版标准公式）
+    """
+    z, mu, var, sigma, z_norm = cache
+    m = z.shape[1]
+
+    # 梯度计算
+    dgamma = np.sum(dz_out * z_norm, axis=1, keepdims=True)
+    dbeta = np.sum(dz_out, axis=1, keepdims=True)
+
+    dz_norm = dz_out * gamma
+    dvar = np.sum(dz_norm * (z - mu) * (-0.5) * (var + eps)**(-3/2), axis=1, keepdims=True)
+    dmu = np.sum(dz_norm * (-1 / sigma), axis=1, keepdims=True) + dvar * np.mean(-2 * (z - mu), axis=1, keepdims=True)
+
+    dz = (dz_norm / sigma) + (dmu / m) + (dvar * 2 * (z - mu) / m)
+    return dz, dgamma, dbeta
+
+# ==================== 4. 神经网络核心函数 ====================
+def forward_propagation(X, w1, b1, w2, b2, gamma1, beta1, activation='tanh'):
     act_func = ACTIVATION_FUNCTIONS[activation]['func']
-    
+
     # 隐藏层
     z1 = np.dot(w1.T, X) + b1
-    a1 = act_func(z1)
+    z1_bn, bn_cache1 = batch_norm_forward(z1, gamma1, beta1)
+    a1 = act_func(z1_bn)
 
     # 输出层
     z2 = np.dot(w2.T, a1) + b2
     a2 = sigmoid(z2)
 
-    return z1, a1, a2
+    return z1, a1, a2, bn_cache1
 
 def logistic_loss(A, Y):
     """逻辑回归损失函数"""
@@ -92,30 +122,31 @@ def logistic_loss(A, Y):
     epsilon = 1e-8
     return -(1 / m) * np.sum(Y * np.log(A + epsilon) + (1 - Y) * np.log(1 - A + epsilon))
 
-def backward_propagation(X, Y, W2, z1, a1, a2, activation='tanh'):
-    """反向传播"""
+def backward_propagation(X, Y, W2, a1, a2, bn_cache1, gamma1, activation='tanh'):
     act_deriv = ACTIVATION_FUNCTIONS[activation]['deriv']
     m = X.shape[1]
 
     dz2 = a2 - Y
     dw2 = (1 / m) * np.dot(a1, dz2.T)
     db2 = (1 / m) * np.sum(dz2, axis=1, keepdims=True)
-    
-    act_derivative = act_deriv(a1)
-    dz1 = np.dot(W2, dz2) * act_derivative
+
+    # 隐藏层梯度
+    da1 = np.dot(W2, dz2)
+    dz1_bn = da1 * act_deriv(a1)
+
+    # BN 反向
+    dz1, dgamma1, dbeta1 = batch_norm_backward(dz1_bn, bn_cache1, gamma1)
 
     dw1 = (1 / m) * np.dot(X, dz1.T)
     db1 = (1 / m) * np.sum(dz1, axis=1, keepdims=True)
 
-    return dw1, db1, dw2, db2
+    return dw1, db1, dw2, db2, dgamma1, dbeta1
 
-def predict(X, w1, b1, w2, b2, activation='tanh'):
-    """预测函数"""
-    _, _, A = forward_propagation(X, w1, b1, w2, b2, activation=activation)
+def predict(X, w1, b1, w2, b2, gamma1, beta1, activation='tanh'):
+    _, _, A, _ = forward_propagation(X, w1, b1, w2, b2, gamma1, beta1, activation=activation)
     return (A >= 0.5).astype(int)
 
 def accuracy(Y_pre, Y_true):
-    """准确率计算"""
     return np.mean(Y_pre == Y_true)
 
 def generate_mini_batches(X, Y, mini_batch_size, seed):
@@ -145,7 +176,8 @@ def generate_mini_batches(X, Y, mini_batch_size, seed):
 
     return mini_batches
 
-def train_neural_network(X_train, Y_train, X_test, Y_test, activation_type, num_epochs=8000, learn_rate=0.4, h=4, mini_batch_size=64):
+def train_neural_network(X_train, Y_train, X_test, Y_test, activation_type,
+                         num_epochs=3000, learn_rate=0.05, h=8, mini_batch_size=64):
     """训练神经网络并返回历史记录（Mini-batch SGD, epoch遍历式）"""
     np.random.seed(42)  # 确保每次训练使用相同的初始权重
 
@@ -156,14 +188,16 @@ def train_neural_network(X_train, Y_train, X_test, Y_test, activation_type, num_
     b1 = np.zeros((h, 1))
     w2 = np.random.randn(h, 1) * 0.01
     b2 = np.zeros((1, 1))
+    gamma1 = np.ones((h, 1))
+    beta1 = np.zeros((h, 1))
 
     loss_history = []
     train_acc_history = []
     test_acc_history = []
-    step = 0  # 记录总迭代步数
+    step = 0
 
     print(f"\n{'='*60}")
-    print(f"训练激活函数: {activation_type} (mini_batch_size={mini_batch_size})")
+    print(f"训练激活函数: {activation_type}")
     print(f"{'='*60}")
 
     for epoch in range(num_epochs):
@@ -171,127 +205,97 @@ def train_neural_network(X_train, Y_train, X_test, Y_test, activation_type, num_
         mini_batches = generate_mini_batches(X_train, Y_train, mini_batch_size, seed=epoch)
 
         for X_batch, Y_batch in mini_batches:
-            z1, a1, a2 = forward_propagation(X_batch, w1, b1, w2, b2, activation=activation_type)
+            z1, a1, a2, bn_cache1 = forward_propagation(
+                X_batch, w1, b1, w2, b2, gamma1, beta1, activation_type)
             loss = logistic_loss(a2, Y_batch)
 
-            dw1, db1, dw2, db2 = backward_propagation(X_batch, Y_batch, w2, z1, a1, a2, activation=activation_type)
+            dw1, db1, dw2, db2, dgamma1, dbeta1 = backward_propagation(
+                X_batch, Y_batch, w2, a1, a2, bn_cache1, gamma1, activation_type)
 
+            # 更新
             w1 = w1 - learn_rate * dw1
             b1 = b1 - learn_rate * db1
             w2 = w2 - learn_rate * dw2
             b2 = b2 - learn_rate * db2
+            gamma1 -= learn_rate * dgamma1
+            beta1 -= learn_rate * dbeta1
 
             if step % 50 == 0:
                 loss_history.append(loss)
-
-                Y_pred_train = predict(X_train, w1, b1, w2, b2, activation=activation_type)
-                train_acc = accuracy(Y_pred_train, Y_train)
-                train_acc_history.append(train_acc)
-
-                Y_pred_test = predict(X_test, w1, b1, w2, b2, activation=activation_type)
-                test_acc = accuracy(Y_pred_test, Y_test)
-                test_acc_history.append(test_acc)
+                Y_pred_train = predict(X_train, w1, b1, w2, b2, gamma1, beta1, activation_type)
+                train_acc_history.append(accuracy(Y_pred_train, Y_train))
+                Y_pred_test = predict(X_test, w1, b1, w2, b2, gamma1, beta1, activation_type)
+                test_acc_history.append(accuracy(Y_pred_test, Y_test))
 
                 if step % 1000 == 0:
-                    print(f"Step {step:5d} (Epoch {epoch}), Loss: {loss:.6f}, Train Acc: {train_acc:.4f}, Test Acc: {test_acc:.4f}")
+                    print(f"Step {step:5d} | Loss {loss:.4f} | Train {train_acc_history[-1]:.4f} | Test {test_acc_history[-1]:.4f}")
 
             step += 1
 
-    # 最终准确率
-    Y_pred_test = predict(X_test, w1, b1, w2, b2, activation=activation_type)
-    final_test_acc = accuracy(Y_pred_test, Y_test)
-    Y_pred_train = predict(X_train, w1, b1, w2, b2, activation=activation_type)
-    final_train_acc = accuracy(Y_pred_train, Y_train)
+    # 最终结果
+    final_train_acc = accuracy(predict(X_train, w1, b1, w2, b2, gamma1, beta1, activation_type), Y_train)
+    final_test_acc = accuracy(predict(X_test, w1, b1, w2, b2, gamma1, beta1, activation_type), Y_test)
 
-    print(f"\n最终结果 - 训练集准确率: {final_train_acc*100:.2f}%, 测试集准确率: {final_test_acc*100:.2f}%")
+    print(f"\n最终 → 训练: {final_train_acc*100:.2f}% | 测试: {final_test_acc*100:.2f}%")
 
     return {
         'w1': w1, 'b1': b1, 'w2': w2, 'b2': b2,
+        'gamma1': gamma1, 'beta1': beta1,
         'loss_history': loss_history,
         'train_acc_history': train_acc_history,
         'test_acc_history': test_acc_history,
         'final_train_acc': final_train_acc,
-        'final_test_acc': final_test_acc,
-        'total_steps': step
+        'final_test_acc': final_test_acc
     }
 
-def plot_decision_boundary(X, Y, w1, b1, w2, b2, ax, activation='tanh', title='Decision Boundary'):
-    """绘制决策边界"""
+def plot_decision_boundary(X, Y, w1, b1, w2, b2, gamma1, beta1, ax, activation='tanh', title='Decision Boundary'):
     x_min, x_max = X[0, :].min() - 0.5, X[0, :].max() + 0.5
     y_min, y_max = X[1, :].min() - 0.5, X[1, :].max() + 0.5
-    
+
     xx, yy = np.meshgrid(np.arange(x_min, x_max, 0.02),
                          np.arange(y_min, y_max, 0.02))
-    
     grid_points = np.c_[xx.ravel(), yy.ravel()].T
-    predictions = predict(grid_points, w1, b1, w2, b2, activation=activation)
+    predictions = predict(grid_points, w1, b1, w2, b2, gamma1, beta1, activation=activation)
     predictions = predictions.reshape(xx.shape)
-    
+
     ax.contourf(xx, yy, predictions, cmap=plt.cm.RdBu, alpha=0.3)
-    ax.scatter(X[0, :], X[1, :], c=Y[0, :], cmap=plt.cm.RdBu, edgecolors='k', s=30)
-    ax.set_xlabel('Feature 1', fontsize=10)
-    ax.set_ylabel('Feature 2', fontsize=10)
-    ax.set_title(title, fontsize=12, fontweight='bold')
-    ax.set_xlim([x_min, x_max])
-    ax.set_ylim([y_min, y_max])
+    ax.scatter(X[0, :], X[1, :], c=Y[0, :], cmap=plt.cm.RdBu, edgecolors='k', s=20)
+    ax.set_title(title, fontweight='bold')
 
-num_epochs = 2500
-lear_rate = 0.4
-mini_batch_size = 64  # 每次随机抽取的样本数
-
-# ==================== 4. 训练三种激活函数 ====================
-activation_types = ['relu', 'leaky_relu', 'tanh', 'sigmoid']
+# ==================== 5. 训练三种激活函数 ====================
+activation_types = ['relu', 'leaky_relu', 'tanh']
 results = {}
 
 for act_type in activation_types:
     results[act_type] = train_neural_network(
         X_train, Y_train, X_test, Y_test,
         activation_type=act_type,
-        num_epochs=num_epochs,
-        learn_rate=lear_rate,
-        h=8,
-        mini_batch_size=mini_batch_size
+        num_epochs=6000,
+        learn_rate=0.1,
+        h=4,
+        mini_batch_size=512
     )
 
-
-# ==================== 5. 可视化对比 ====================
-fig, axes = plt.subplots(len(activation_types), 2, figsize=(16, 18))
-
-# 根据实际训练步数生成iterations
-total_steps = results[activation_types[0]]['total_steps']
-iterations = list(range(0, total_steps, 50))
+# ==================== 6. 可视化对比 ====================
+fig, axes = plt.subplots(len(activation_types), 2, figsize=(14, 12))
 
 for idx, act_type in enumerate(activation_types):
-    result = results[act_type]
+    res = results[act_type]
+    iters = np.arange(len(res['loss_history'])) * 50
 
-    # 左图: Loss和准确率曲线
+    # 训练曲线
     ax1 = axes[idx, 0]
-    ax1.plot(iterations, result['loss_history'], 'r-', linewidth=2, label='Loss')
-    ax1.plot(iterations, result['train_acc_history'], 'b-', linewidth=2, label='Train Accuracy')
-    ax1.plot(iterations, result['test_acc_history'], 'g-', linewidth=2, label='Test Accuracy')
-    ax1.set_xlabel('Step', fontsize=10)
-    ax1.set_ylabel('Value', fontsize=10)
-    ax1.set_title(f'{act_type.upper()} - Training Progress\n' +
-                  f'Train Acc: {result["final_train_acc"]*100:.2f}%, Test Acc: {result["final_test_acc"]*100:.2f}%',
-                  fontsize=12, fontweight='bold')
-    ax1.legend(loc='best', fontsize=8)
-    ax1.grid(True, alpha=0.3)
-    ax1.set_xlim([0, total_steps])
-    
-    # 右图: 决策边界
+    ax1.plot(iters, res['loss_history'], 'r', label='Loss')
+    ax1.plot(iters, res['train_acc_history'], 'b', label='Train Acc')
+    ax1.plot(iters, res['test_acc_history'], 'g', label='Test Acc')
+    ax1.set_title(f'{act_type.upper()} | Train:{res["final_train_acc"]*100:.1f}% Test:{res["final_test_acc"]*100:.1f}%')
+    ax1.legend()
+    ax1.grid(alpha=0.3)
+
+    # 决策边界
     ax2 = axes[idx, 1]
-    plot_decision_boundary(
-        X_train, Y_train, 
-        result['w1'], result['b1'], result['w2'], result['b2'],
-        ax2, 
-        activation=act_type,
-        title=f'{act_type.upper()} - Decision Boundary'
-    )
+    plot_decision_boundary(X_train, Y_train, res['w1'], res['b1'], res['w2'], res['b2'],
+                            res['gamma1'], res['beta1'], ax2, act_type, f'{act_type.upper()} 决策边界')
 
 plt.tight_layout()
-# plt.show()  # 在终端环境中注释掉，避免阻塞
-plt.savefig('04activation_comparison_with_minibatch.png', dpi=150, bbox_inches='tight')
-print(f"\n{'='*60}")
-print("对比图像已保存为 04activation_comparison_with_minibatch.png")
-print(f"{'='*60}")
-# plt.show()
+plt.savefig('08activation_comparison_with_batchnormal.png', dpi=150, bbox_inches='tight')
