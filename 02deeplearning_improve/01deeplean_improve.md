@@ -542,3 +542,228 @@ $$\frac{\partial L}{\partial z^{(i)}} = \frac{\partial L}{\partial z_{\text{norm
 
 ### 测试时的Batch Norm
 求均值和方差时使用mini batch中m个样本进行计算，而不是整个样本数量。求一个样本的均值和方差无意义
+
+
+
+## softmax
+
+Softmax 是一种用于**多分类问题**的激活函数，它将神经网络的输出转换为概率分布，使得所有类别的概率之和为1。
+
+#### 应用场景
+
+- **二分类问题**: 使用 Sigmoid 激活函数（输出层单个神经元）
+- **多分类问题**: 使用 Softmax 激活函数（输出层多个神经元，每个类别一个）
+
+例如：手写数字识别（0-9共10类）、图像分类（猫/狗/鸟等）、文本分类等。
+
+---
+
+#### 正向传播 (Forward Propagation)
+
+对于输出层的第 $j$ 个神经元，Softmax 的计算公式为：
+
+$$a_j = \frac{e^{z_j}}{\sum_{k=1}^{C} e^{z_k}}$$
+
+其中：
+- $z_j$: 第 $j$ 个神经元的线性输出（logits）
+- $C$: 类别总数
+- $a_j$: 第 $j$ 个类别的预测概率
+
+**向量化形式**（处理 m 个样本）：
+
+假设 $Z$ 的形状为 $(C, m)$，则：
+
+$$A = \text{softmax}(Z) = \frac{e^Z}{\sum_{k=1}^{C} e^{Z_k}}$$
+
+**数值稳定性优化**：
+
+直接计算 $e^{z_j}$ 可能导致数值溢出（当 $z_j$ 很大时）。解决方法是减去最大值：
+
+$$a_j = \frac{e^{z_j - z_{\max}}}{\sum_{k=1}^{C} e^{z_k - z_{\max}}}$$
+
+这个变换不会改变结果，因为分子分母同时除以了 $e^{z_{\max}}$。
+
+**特性**：
+
+1. **概率解释**: 输出值在 [0, 1] 之间，且所有类别概率之和为 1
+2. **单调性**: 输入越大，输出概率越高
+3. **可微性**: 处处可导，适合梯度下降优化
+
+---
+
+#### 损失函数：交叉熵 (Cross-Entropy Loss)
+
+对于多分类问题，通常使用**交叉熵损失函数**。
+
+**单样本损失**：
+
+$$L(\hat{y}, y) = -\sum_{j=1}^{C} y_j \log(\hat{y}_j)$$
+
+其中：
+- $y_j$: 真实标签的 one-hot 编码（正确类别为1，其他为0）
+- $\hat{y}_j$: 预测概率
+
+由于 $y$ 是 one-hot 编码，只有一个位置为1，所以简化为：
+
+$$L = -\log(\hat{y}_{\text{correct}})$$
+
+**多样本平均损失**：
+
+$$J = -\frac{1}{m}\sum_{i=1}^{m}\sum_{j=1}^{C} y_j^{(i)} \log(\hat{y}_j^{(i)})$$
+
+
+#### 反向传播 (Backpropagation)
+
+Softmax + Cross-Entropy 的反向传播有一个非常简洁的结果：
+
+
+$$\frac{\partial L}{\partial z_j} = a_j - y_j$$
+
+即：**输出层的梯度等于预测概率减去真实标签**。
+
+**向量化形式**：
+
+$$dZ = A - Y$$
+
+其中：
+- $dZ$: 损失对线性输出 $Z$ 的梯度 $(C, m)$
+- $A$: Softmax 输出 $(C, m)$
+- $Y$: 真实标签 one-hot 编码 $(C, m)$
+
+**推导过程**：
+
+对于第 $j$ 个输出神经元：
+
+$$\frac{\partial L}{\partial z_j} = \sum_{k=1}^{C} \frac{\partial L}{\partial a_k} \cdot \frac{\partial a_k}{\partial z_j}$$
+
+**情况1：$k = j$（对角线元素）**
+
+$$\frac{\partial a_j}{\partial z_j} = a_j(1 - a_j)$$
+
+$$\frac{\partial L}{\partial a_j} = -\frac{y_j}{a_j}$$
+
+$$\frac{\partial L}{\partial z_j} = -\frac{y_j}{a_j} \cdot a_j(1 - a_j) = -y_j(1 - a_j) = a_j y_j - y_j$$
+
+**情况2：$k \neq j$（非对角线元素）**
+
+$$\frac{\partial a_k}{\partial z_j} = -a_k a_j$$
+
+$$\frac{\partial L}{\partial a_k} = -\frac{y_k}{a_k}$$
+
+$$\frac{\partial L}{\partial z_j} = -\frac{y_k}{a_k} \cdot (-a_k a_j) = y_k a_j$$
+
+**合并两种情况**：
+
+$$\frac{\partial L}{\partial z_j} = a_j y_j - y_j + \sum_{k \neq j} y_k a_j = a_j \sum_{k=1}^{C} y_k - y_j$$
+
+由于 $\sum_{k=1}^{C} y_k = 1$（one-hot 编码），最终得到：
+
+$$\frac{\partial L}{\partial z_j} = a_j - y_j$$
+
+**关键结论**：
+
+Softmax + Cross-Entropy 的组合使得梯度计算极其简洁，与二分类中 Sigmoid + Binary Cross-Entropy 的形式完全一致！
+
+---
+
+#### Softmax vs Sigmoid 对比
+
+| 特性 | Softmax | Sigmoid |
+|------|---------|---------|
+| **适用场景** | 多分类（互斥类别） | 二分类或多标签分类 |
+| **输出层神经元数** | 类别数 C | 1（二分类）或 C（多标签） |
+| **输出特性** | 所有输出之和为 1 | 每个输出独立在 [0,1] |
+| **概率解释** | 类别间的相对概率 | 各类别独立的概率 |
+| **损失函数** | Cross-Entropy | Binary Cross-Entropy |
+| **梯度形式** | $dZ = A - Y$ | $dZ = A - Y$ |
+
+**选择建议**：
+
+- **互斥多分类**（如：一张图只能是猫/狗/鸟之一）→ 使用 Softmax
+- **多标签分类**（如：一张图可以同时包含猫和狗）→ 每个类别用独立的 Sigmoid
+- **二分类** → 使用 Sigmoid（等价于两类别的 Softmax）
+
+---
+
+#### 注意事项
+
+1. **数值稳定性**: 始终使用减去最大值的技巧防止溢出
+2. **One-Hot 编码**: 确保标签正确转换为 one-hot 格式
+3. **维度匹配**: 输出层神经元数必须等于类别数
+4. **避免在输出层使用 BatchNorm**: 会破坏概率分布的性质
+5. **学习率调整**: Softmax 输出对输入变化敏感，可能需要较小的学习率
+
+---
+
+#### 总结
+
+Softmax 是多分类问题的标准选择，其核心优势在于：
+
+1. **概率解释清晰**: 输出可直接理解为类别概率
+2. **梯度计算简洁**: 与交叉熵配合后梯度形式简单
+3. **数值稳定**: 通过减去最大值避免溢出
+4. **广泛应用**: 图像分类、NLP、推荐系统等领域的基础组件
+
+掌握 Softmax 的正反向传播推导和实现，是理解现代深度学习框架的关键基础。
+
+
+
+
+### 符号
+$$a_i = \frac{e^{z_i}}{S},\quad S=\sum_{k=1}^C e^{z_k}$$
+
+### 分两种情况：$i=j$、$i\neq j$
+#### ① $i = j$
+$$
+\begin{aligned}
+\frac{\partial a_i}{\partial z_i}
+&=\frac{\partial}{\partial z_i}\left(\frac{e^{z_i}}{S}\right)
+=\frac{e^{z_i}\cdot S - e^{z_i}\cdot \frac{\partial S}{\partial z_i}}{S^2}\\
+&\frac{\partial S}{\partial z_i}=e^{z_i}\\
+&=\frac{e^{z_i}S - e^{z_i}\cdot e^{z_i}}{S^2}
+=\frac{e^{z_i}}{S}-\left(\frac{e^{z_i}}{S}\right)^2\\
+&=a_i - a_i^2 = a_i(1-a_i)
+\end{aligned}
+$$
+
+#### ② $i \neq j$
+$z_j$只在分母$S$里，分子$e^{z_i}$和$z_j$无关
+$$
+\begin{aligned}
+\frac{\partial a_i}{\partial z_j}
+&=\frac{\partial}{\partial z_j}\left(\frac{e^{z_i}}{S}\right)
+=e^{z_i}\cdot\frac{0 - \frac{\partial S}{\partial z_j}}{S^2}\\
+&\frac{\partial S}{\partial z_j}=e^{z_j}\\
+&=-\frac{e^{z_i}e^{z_j}}{S^2}
+=-a_i a_j
+\end{aligned}
+$$
+
+### 汇总Softmax雅可比
+$$
+\frac{\partial a_i}{\partial z_j}=
+\begin{cases}
+a_i(1-a_i) & i=j\\
+-a_i a_j & i\neq j
+\end{cases}
+$$
+
+## 放回交叉熵链式推导
+$$
+\frac{\partial L}{\partial z_j}=\sum_{i=1}^C \frac{\partial L}{\partial a_i}\frac{\partial a_i}{\partial z_j},\quad \frac{\partial L}{\partial a_i}=-\frac{y_i}{a_i}
+$$
+拆成$i=j$一项 + $i\neq j$求和项：
+$$
+\begin{aligned}
+\frac{\partial L}{\partial z_j}
+&=\frac{\partial L}{\partial a_j}\cdot\frac{\partial a_j}{\partial z_j}
++\sum_{i\neq j}\frac{\partial L}{\partial a_i}\cdot\frac{\partial a_i}{\partial z_j}\\
+&=-\frac{y_j}{a_j}\cdot a_j(1-a_j)
++\sum_{i\neq j}\left(-\frac{y_i}{a_i}\right)(-a_i a_j)\\
+&=-y_j(1-a_j)+a_j\sum_{i\neq j}y_i\\
+&=-y_j+a_j y_j+a_j\sum_{i\neq j}y_i\\
+&=a_j\sum_{i=1}^C y_i - y_j
+\end{aligned}
+$$
+one-hot：$\sum\limits_{i=1}^C y_i=1$
+$$\frac{\partial L}{\partial z_j}=a_j-y_j$$
