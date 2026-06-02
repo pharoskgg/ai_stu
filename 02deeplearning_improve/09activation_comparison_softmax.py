@@ -1,7 +1,9 @@
 # 激活函数对比实验: ReLU vs Leaky ReLU vs Tanh
 import numpy as np
 import matplotlib.pyplot as plt
-from sklearn.datasets import make_moons
+from sklearn.datasets import make_classification
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import OneHotEncoder
 import warnings
 
 # 过滤数值警告
@@ -10,26 +12,156 @@ warnings.filterwarnings('ignore')
 # 设置随机种子,保证结果可复现
 np.random.seed(42)
 
-# ==================== 1. 生成数据集 ====================
-X, Y = make_moons(n_samples=600, noise=0.2, random_state=42)
 
-# 划分训练集和测试集 (80%训练, 20%测试)
-split_idx = int(0.8 * len(X))
-X_train, X_test = X[:split_idx], X[split_idx:]
-Y_train, Y_test = Y[:split_idx], Y[split_idx:]
+# ==================== 1. 数据生成函数 ====================
+def generate_multiclass_data(
+    n_samples=1000,
+    n_features=2,
+    n_classes=3,
+    test_size=0.2,
+    random_state=42
+):
+    """
+    生成多分类数据集
+    
+    参数:
+        n_samples: 样本总数
+        n_features: 特征数量（输入维度）
+        n_classes: 类别数量
+        test_size: 测试集比例
+        random_state: 随机种子
+    
+    返回:
+        X_train, X_test: 训练集和测试集特征
+        y_train, y_test: 训练集和测试集标签（原始格式）
+        y_train_onehot, y_test_onehot: one-hot编码后的标签
+        encoder: OneHotEncoder对象
+    """
+    # 生成多分类数据
+    X, y = make_classification(
+        n_samples=n_samples,
+        n_features=n_features,
+        n_informative=n_features,  # 所有特征都是有效特征
+        n_redundant=0,             # 无冗余特征
+        n_classes=n_classes,
+        n_clusters_per_class=1,
+        random_state=random_state
+    )
+    
+    # 划分训练集和测试集
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=test_size, random_state=random_state
+    )
+    
+    # 转换为one-hot编码
+    encoder = OneHotEncoder(sparse_output=False)
+    y_train_onehot = encoder.fit_transform(y_train.reshape(-1, 1))
+    y_test_onehot = encoder.transform(y_test.reshape(-1, 1))
+    
+    return X_train, X_test, y_train, y_test, y_train_onehot, y_test_onehot, encoder
 
-# 转置为 (特征数, 样本数)
-X_train = X_train.T  # (2, 480)
-Y_train = Y_train.reshape(1, -1)  # (1, 480)
-X_test = X_test.T  # (2, 120)
-Y_test = Y_test.reshape(1, -1)  # (1, 120)
 
-n_features, m_train = X_train.shape
-print(f"训练集: X{X_train.shape}, Y{Y_train.shape}")
-print(f"测试集: X{X_test.shape}, Y{Y_test.shape}")
+def visualize_dataset(X, y, title="多分类数据集"):
+    """
+    可视化数据集
+    
+    参数:
+        X: 特征数据（需要是2维以便可视化）
+        y: 标签数据
+        title: 图表标题
+    """
+    if X.shape[1] != 2:
+        print("警告：只有2维特征才能可视化，当前特征维度:", X.shape[1])
+        return
+    
+    plt.figure(figsize=(8, 5))
+    scatter = plt.scatter(X[:, 0], X[:, 1], c=y, cmap="viridis", s=30, edgecolors='k', linewidth=0.5)
+    plt.title(title, fontsize=14)
+    plt.xlabel("Feature 1", fontsize=12)
+    plt.ylabel("Feature 2", fontsize=12)
+    plt.colorbar(scatter, label="Class")
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig('dataset_visualization.png', dpi=150, bbox_inches='tight')
+    plt.show()
 
 
-# ==================== 2. 激活函数定义 ====================
+def print_data_info(X, y, y_onehot, dataset_name="数据集"):
+    """
+    打印数据集信息
+    
+    参数:
+        X: 特征数据
+        y: 标签数据
+        y_onehot: one-hot编码后的标签
+        dataset_name: 数据集名称
+    """
+    print(f"\n{'='*50}")
+    print(f"{dataset_name}信息")
+    print(f"{'='*50}")
+    print(f"特征形状: {X.shape}")
+    print(f"标签形状: {y.shape}")
+    print(f"One-hot形状: {y_onehot.shape}")
+    print(f"类别列表: {np.unique(y)}")
+    print(f"类别数量: {len(np.unique(y))}")
+    print(f"各类别样本数:")
+    for cls in np.unique(y):
+        count = np.sum(y == cls)
+        print(f"  类别 {cls}: {count} 个样本 ({count/len(y)*100:.1f}%)")
+
+
+# ==================== 2. 数据加载和准备函数 ====================
+def load_and_prepare_data(n_samples=1000, n_features=2, n_classes=3, test_size=0.2, random_state=42, show_plot=False):
+    """
+    加载并准备多分类数据集
+    
+    参数:
+        n_samples: 样本总数
+        n_features: 特征数量
+        n_classes: 类别数量
+        test_size: 测试集比例
+        random_state: 随机种子
+        show_plot: 是否显示数据可视化图像（默认False，仅保存文件）
+    
+    返回:
+        X_train, Y_train, X_test, Y_test: 训练集和测试集（已转置）
+        y_train_raw, y_test_raw: 原始标签
+        encoder: OneHotEncoder对象
+    """
+    X_train_raw, X_test_raw, y_train_raw, y_test_raw, y_train_onehot, y_test_onehot, encoder = generate_multiclass_data(
+        n_samples=n_samples,
+        n_features=n_features,
+        n_classes=n_classes,
+        test_size=test_size,
+        random_state=random_state
+    )
+
+    # 打印数据集信息
+    print_data_info(X_train_raw, y_train_raw, y_train_onehot, "训练集")
+    print_data_info(X_test_raw, y_test_raw, y_test_onehot, "测试集")
+
+    # 可视化数据集（可选）
+    if show_plot:
+        X_full = np.vstack([X_train_raw, X_test_raw])
+        y_full = np.concatenate([y_train_raw, y_test_raw])
+        visualize_dataset(X_full, y_full, title=f"多分类数据集（{n_classes}类）")
+
+    # 转置为 (特征数, 样本数)
+    X_train = X_train_raw.T  # (2, 800)
+    Y_train = y_train_onehot.T  # (3, 800)
+    X_test = X_test_raw.T  # (2, 200)
+    Y_test = y_test_onehot.T  # (3, 200)
+
+    n_features, m_train = X_train.shape
+    n_classes = Y_train.shape[0]
+    print(f"\n训练集: X{X_train.shape}, Y{Y_train.shape}")
+    print(f"测试集: X{X_test.shape}, Y{Y_test.shape}")
+    print(f"特征数: {n_features}, 类别数: {n_classes}")
+    
+    return X_train, Y_train, X_test, Y_test, y_train_raw, y_test_raw, encoder
+
+
+# ==================== 3. 激活函数定义 ====================
 def sigmoid(z):
     """Sigmoid激活函数（输出层）"""
     return 1 / (1 + np.exp(-np.clip(z, -500, 500)))
@@ -71,7 +203,7 @@ ACTIVATION_FUNCTIONS = {
 }
 
 
-# ==================== 3. 神经网络核心函数 ====================
+# ==================== 4. 神经网络核心函数 ====================
 def forward_propagation(X, w1, b1, w2, b2, activation='tanh'):
     """前向传播"""
     act_func = ACTIVATION_FUNCTIONS[activation]['func']
@@ -200,60 +332,130 @@ def plot_decision_boundary(X, Y, w1, b1, w2, b2, ax, activation='tanh', title='D
     ax.set_xlim([x_min, x_max])
     ax.set_ylim([y_min, y_max])
 
-loop_count = 20000
-lear_rate=0.4
-# ==================== 4. 训练三种激活函数 ====================
-activation_types = ['relu', 'leaky_relu', 'tanh', 'sigmoid']
-results = {}
 
-for act_type in activation_types:
-    results[act_type] = train_neural_network(
-        X_train, Y_train, X_test, Y_test, 
-        activation_type=act_type,
-        loop=loop_count,
-        learn_rate=lear_rate,
+# ==================== 5. 训练所有激活函数 ====================
+def train_all_activations(X_train, Y_train, X_test, Y_test, activation_types=None, loop_count=20000, learn_rate=0.4, h=8):
+    """
+    训练所有指定的激活函数
+    
+    参数:
+        X_train, Y_train: 训练集
+        X_test, Y_test: 测试集
+        activation_types: 要训练的激活函数类型列表
+        loop_count: 训练迭代次数
+        learn_rate: 学习率
+        h: 隐藏层神经元数量
+    
+    返回:
+        results: 包含所有激活函数训练结果的字典
+    """
+    if activation_types is None:
+        activation_types = ['relu', 'leaky_relu', 'tanh', 'sigmoid']
+    
+    results = {}
+    
+    for act_type in activation_types:
+        results[act_type] = train_neural_network(
+            X_train, Y_train, X_test, Y_test, 
+            activation_type=act_type,
+            loop=loop_count,
+            learn_rate=learn_rate,
+            h=h
+        )
+    
+    return results
+
+
+# ==================== 6. 可视化结果 ====================
+def visualize_results(results, activation_types=None, loop_count=20000, X_train=None, Y_train=None):
+    """
+    可视化所有激活函数的训练结果和决策边界
+    
+    参数:
+        results: 训练结果字典
+        activation_types: 激活函数类型列表
+        loop_count: 训练迭代次数
+        X_train, Y_train: 训练集数据（用于绘制决策边界）
+    """
+    if activation_types is None:
+        activation_types = list(results.keys())
+    
+    fig, axes = plt.subplots(len(activation_types), 2, figsize=(16, 18))
+
+    # 根据实际训练轮数生成iterations
+    iterations = list(range(0, loop_count, 100))
+
+    for idx, act_type in enumerate(activation_types):
+        result = results[act_type]
+        
+        # 左图: Loss和准确率曲线
+        ax1 = axes[idx, 0]
+        ax1.plot(iterations, result['loss_history'], 'r-', linewidth=2, label='Loss')
+        ax1.plot(iterations, result['train_acc_history'], 'b-', linewidth=2, label='Train Accuracy')
+        ax1.plot(iterations, result['test_acc_history'], 'g-', linewidth=2, label='Test Accuracy')
+        ax1.set_xlabel('Iteration', fontsize=10)
+        ax1.set_ylabel('Value', fontsize=10)
+        ax1.set_title(f'{act_type.upper()} - Training Progress\n' + 
+                      f'Train Acc: {result["final_train_acc"]*100:.2f}%, Test Acc: {result["final_test_acc"]*100:.2f}%', 
+                      fontsize=12, fontweight='bold')
+        ax1.legend(loc='best', fontsize=8)
+        ax1.grid(True, alpha=0.3)
+        ax1.set_xlim([0, loop_count])
+        
+        # 右图: 决策边界
+        if X_train is not None and Y_train is not None:
+            ax2 = axes[idx, 1]
+            plot_decision_boundary(
+                X_train, Y_train, 
+                result['w1'], result['b1'], result['w2'], result['b2'],
+                ax2, 
+                activation=act_type,
+                title=f'{act_type.upper()} - Decision Boundary'
+            )
+
+    plt.tight_layout()
+    plt.savefig('activation_comparison.png', dpi=150, bbox_inches='tight')
+    print(f"\n{'='*60}")
+    print("对比图像已保存为 activation_comparison.png")
+    print(f"{'='*60}")
+    # plt.show()  # 在终端环境中注释掉，避免阻塞
+
+
+# ==================== 7. 主函数 ====================
+def main():
+    """主函数：执行完整的激活函数对比实验"""
+    # 加载和准备数据
+    X_train, Y_train, X_test, Y_test, y_train_raw, y_test_raw, encoder = load_and_prepare_data(
+        n_samples=1000,
+        n_features=2,
+        n_classes=3,
+        test_size=0.2,
+        random_state=24,
+        show_plot=True  # 显示数据可视化图像
+    )
+    """
+    # 训练所有激活函数
+    activation_types = ['relu', 'leaky_relu', 'tanh', 'sigmoid']
+    results = train_all_activations(
+        X_train, Y_train, X_test, Y_test,
+        activation_types=activation_types,
+        loop_count=20000,
+        learn_rate=0.4,
         h=8
     )
-
-
-# ==================== 5. 可视化对比 ====================
-fig, axes = plt.subplots(len(activation_types), 2, figsize=(16, 18))
-
-# 根据实际训练轮数生成iterations
-
-iterations = list(range(0, loop_count, 100))
-
-for idx, act_type in enumerate(activation_types):
-    result = results[act_type]
     
-    # 左图: Loss和准确率曲线
-    ax1 = axes[idx, 0]
-    ax1.plot(iterations, result['loss_history'], 'r-', linewidth=2, label='Loss')
-    ax1.plot(iterations, result['train_acc_history'], 'b-', linewidth=2, label='Train Accuracy')
-    ax1.plot(iterations, result['test_acc_history'], 'g-', linewidth=2, label='Test Accuracy')
-    ax1.set_xlabel('Iteration', fontsize=10)
-    ax1.set_ylabel('Value', fontsize=10)
-    ax1.set_title(f'{act_type.upper()} - Training Progress\n' + 
-                  f'Train Acc: {result["final_train_acc"]*100:.2f}%, Test Acc: {result["final_test_acc"]*100:.2f}%', 
-                  fontsize=12, fontweight='bold')
-    ax1.legend(loc='best', fontsize=8)
-    ax1.grid(True, alpha=0.3)
-    ax1.set_xlim([0, loop_count])
-    
-    # 右图: 决策边界
-    ax2 = axes[idx, 1]
-    plot_decision_boundary(
-        X_train, Y_train, 
-        result['w1'], result['b1'], result['w2'], result['b2'],
-        ax2, 
-        activation=act_type,
-        title=f'{act_type.upper()} - Decision Boundary'
+    # 可视化结果
+    visualize_results(
+        results,
+        activation_types=activation_types,
+        loop_count=20000,
+        X_train=X_train,
+        Y_train=Y_train
     )
+    
+    return results
+    """
 
-plt.tight_layout()
-# plt.show()  # 在终端环境中注释掉，避免阻塞
-plt.savefig('activation_comparison.png', dpi=150, bbox_inches='tight')
-print(f"\n{'='*60}")
-print("对比图像已保存为 activation_comparison.png")
-print(f"{'='*60}")
-# plt.show()
+# ==================== 8. 程序入口 ====================
+if __name__ == "__main__":
+    results = main()
