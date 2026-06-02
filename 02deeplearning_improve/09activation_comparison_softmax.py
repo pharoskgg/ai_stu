@@ -1,7 +1,7 @@
-# 激活函数对比实验: ReLU vs Leaky ReLU vs Tanh
+# 激活函数对比实验: ReLU vs Leaky ReLU vs Tanh (Softmax多分类)
 import numpy as np
 import matplotlib.pyplot as plt
-from sklearn.datasets import make_classification
+from sklearn.datasets import make_blobs
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import OneHotEncoder
 import warnings
@@ -19,10 +19,11 @@ def generate_multiclass_data(
     n_features=2,
     n_classes=3,
     test_size=0.2,
-    random_state=42
+    random_state=42,
+    cluster_std=1.0
 ):
     """
-    生成多分类数据集
+    使用make_blobs生成多分类数据集
     
     参数:
         n_samples: 样本总数
@@ -30,6 +31,7 @@ def generate_multiclass_data(
         n_classes: 类别数量
         test_size: 测试集比例
         random_state: 随机种子
+        cluster_std: 簇的标准差（控制数据分散程度）
     
     返回:
         X_train, X_test: 训练集和测试集特征
@@ -37,14 +39,12 @@ def generate_multiclass_data(
         y_train_onehot, y_test_onehot: one-hot编码后的标签
         encoder: OneHotEncoder对象
     """
-    # 生成多分类数据
-    X, y = make_classification(
+    # 使用make_blobs生成多分类数据
+    X, y = make_blobs(
         n_samples=n_samples,
         n_features=n_features,
-        n_informative=n_features,  # 所有特征都是有效特征
-        n_redundant=0,             # 无冗余特征
-        n_classes=n_classes,
-        n_clusters_per_class=1,
+        centers=n_classes,
+        cluster_std=cluster_std,
         random_state=random_state
     )
     
@@ -111,7 +111,7 @@ def print_data_info(X, y, y_onehot, dataset_name="数据集"):
 
 
 # ==================== 2. 数据加载和准备函数 ====================
-def load_and_prepare_data(n_samples=1000, n_features=2, n_classes=3, test_size=0.2, random_state=42, show_plot=False):
+def load_and_prepare_data(n_samples=1000, n_features=2, n_classes=3, test_size=0.2, random_state=42, show_plot=False, cluster_std=1.0):
     """
     加载并准备多分类数据集
     
@@ -122,6 +122,7 @@ def load_and_prepare_data(n_samples=1000, n_features=2, n_classes=3, test_size=0
         test_size: 测试集比例
         random_state: 随机种子
         show_plot: 是否显示数据可视化图像（默认False，仅保存文件）
+        cluster_std: 簇的标准差（控制数据分散程度）
     
     返回:
         X_train, Y_train, X_test, Y_test: 训练集和测试集（已转置）
@@ -133,7 +134,8 @@ def load_and_prepare_data(n_samples=1000, n_features=2, n_classes=3, test_size=0
         n_features=n_features,
         n_classes=n_classes,
         test_size=test_size,
-        random_state=random_state
+        random_state=random_state,
+        cluster_std=cluster_std
     )
 
     # 打印数据集信息
@@ -162,13 +164,20 @@ def load_and_prepare_data(n_samples=1000, n_features=2, n_classes=3, test_size=0
 
 
 # ==================== 3. 激活函数定义 ====================
+def softmax(z):
+    """Softmax激活函数（输出层）- 数值稳定版本"""
+    # 减去最大值以防止数值溢出
+    exp_z = np.exp(z - np.max(z, axis=0, keepdims=True))
+    return exp_z / np.sum(exp_z, axis=0, keepdims=True)
+
 def sigmoid(z):
-    """Sigmoid激活函数（输出层）"""
+    """Sigmoid激活函数（仅用于二分类对比）"""
     return 1 / (1 + np.exp(-np.clip(z, -500, 500)))
 
 def sigmoid_derivative(z):
     """Sigmoid的导数"""
-    return sigmoid(z) * (1 - sigmoid(z))
+    s = sigmoid(z)
+    return s * (1 - s)
 
 def relu(z):
     """ReLU激活函数"""
@@ -204,8 +213,19 @@ ACTIVATION_FUNCTIONS = {
 
 
 # ==================== 4. 神经网络核心函数 ====================
-def forward_propagation(X, w1, b1, w2, b2, activation='tanh'):
-    """前向传播"""
+def forward_propagation(X, w1, b1, w2, b2, activation='tanh', use_softmax=False):
+    """前向传播
+    
+    参数:
+        X: 输入数据 (n_features, m)
+        w1, b1: 隐藏层权重和偏置
+        w2, b2: 输出层权重和偏置
+        activation: 隐藏层激活函数类型
+        use_softmax: 是否使用softmax作为输出层（多分类）
+    
+    返回:
+        z1, a1, z2, a2: 各层的线性输出和激活输出
+    """
     act_func = ACTIVATION_FUNCTIONS[activation]['func']
     
     # 隐藏层
@@ -214,67 +234,164 @@ def forward_propagation(X, w1, b1, w2, b2, activation='tanh'):
 
     # 输出层
     z2 = np.dot(w2.T, a1) + b2
-    a2 = sigmoid(z2)
+    
+    if use_softmax:
+        # 多分类：使用softmax
+        a2 = softmax(z2)
+    else:
+        # 二分类：使用sigmoid
+        a2 = sigmoid(z2)
 
-    return z1, a1, a2
+    return z1, a1, z2, a2
+
+def cross_entropy_loss(A, Y):
+    """交叉熵损失函数（适用于softmax多分类）
+    
+    参数:
+        A: 预测概率 (n_classes, m)
+        Y: 真实标签one-hot编码 (n_classes, m)
+    
+    返回:
+        loss: 平均交叉熵损失
+    """
+    m = Y.shape[1]
+    epsilon = 1e-8
+    # 防止log(0)
+    loss = -(1 / m) * np.sum(Y * np.log(A + epsilon))
+    return loss
 
 def logistic_loss(A, Y):
-    """逻辑回归损失函数"""
+    """逻辑回归损失函数（仅用于二分类对比）"""
     m = Y.shape[1]
     epsilon = 1e-8
     return -(1 / m) * np.sum(Y * np.log(A + epsilon) + (1 - Y) * np.log(1 - A + epsilon))
 
-def backward_propagation(X, Y, W2, z1, a1, a2, activation='tanh'):
-    """反向传播"""
+def backward_propagation(X, Y, W2, z1, a1, z2, a2, activation='tanh', use_softmax=False):
+    """反向传播
+    
+    参数:
+        X: 输入数据 (n_features, m)
+        Y: 真实标签 (n_classes, m)
+        W2: 输出层权重
+        z1, a1: 隐藏层的线性输出和激活输出
+        z2, a2: 输出层的线性输出和激活输出
+        activation: 隐藏层激活函数类型
+        use_softmax: 是否使用softmax
+    
+    返回:
+        dw1, db1, dw2, db2: 各参数的梯度
+    """
     act_deriv = ACTIVATION_FUNCTIONS[activation]['deriv']
     m = X.shape[1]
 
-    dz2 = a2 - Y
-    dw2 = (1 / m) * np.dot(a1, dz2.T)
-    db2 = (1 / m) * np.sum(dz2, axis=1, keepdims=True)
+    if use_softmax:
+        # Softmax + Cross Entropy 的梯度简化形式
+        dz2 = a2 - Y  # (n_classes, m)
+    else:
+        # Sigmoid + Binary Cross Entropy
+        dz2 = a2 - Y  # (1, m)
+    
+    dw2 = (1 / m) * np.dot(a1, dz2.T)  # (h, n_classes)
+    db2 = (1 / m) * np.sum(dz2, axis=1, keepdims=True)  # (n_classes, 1)
     
     act_derivative = act_deriv(a1)
-    dz1 = np.dot(W2, dz2) * act_derivative
+    dz1 = np.dot(W2, dz2) * act_derivative  # (h, m)
 
-    dw1 = (1 / m) * np.dot(X, dz1.T)
-    db1 = (1 / m) * np.sum(dz1, axis=1, keepdims=True)
+    dw1 = (1 / m) * np.dot(X, dz1.T)  # (n_features, h)
+    db1 = (1 / m) * np.sum(dz1, axis=1, keepdims=True)  # (h, 1)
 
     return dw1, db1, dw2, db2
 
-def predict(X, w1, b1, w2, b2, activation='tanh'):
-    """预测函数"""
-    _, _, A = forward_propagation(X, w1, b1, w2, b2, activation=activation)
-    return (A >= 0.5).astype(int)
+def predict(X, w1, b1, w2, b2, activation='tanh', use_softmax=False):
+    """预测函数
+    
+    参数:
+        X: 输入数据
+        w1, b1, w2, b2: 网络参数
+        activation: 隐藏层激活函数
+        use_softmax: 是否使用softmax输出
+    
+    返回:
+        predictions: 预测的类别标签（非one-hot）
+    """
+    _, _, _, A = forward_propagation(X, w1, b1, w2, b2, activation=activation, use_softmax=use_softmax)
+    
+    if use_softmax:
+        # 多分类：取概率最大的类别
+        return np.argmax(A, axis=0)
+    else:
+        # 二分类：阈值判断
+        return (A >= 0.5).astype(int)
 
 def accuracy(Y_pre, Y_true):
-    """准确率计算"""
-    return np.mean(Y_pre == Y_true)
+    """准确率计算
+    
+    参数:
+        Y_pre: 预测标签 (m,) 或 (1, m)
+        Y_true: 真实标签 (m,) 或 (n_classes, m) one-hot
+    
+    返回:
+        acc: 准确率
+    """
+    # 如果Y_true是one-hot编码，转换为类别索引
+    if Y_true.ndim > 1 and Y_true.shape[0] > 1:
+        Y_true_flat = np.argmax(Y_true, axis=0)
+    else:
+        Y_true_flat = Y_true.flatten()
+    
+    # 确保Y_pre是一维数组
+    Y_pre_flat = Y_pre.flatten()
+    
+    return np.mean(Y_pre_flat == Y_true_flat)
 
-def train_neural_network(X_train, Y_train, X_test, Y_test, activation_type, loop=8000, learn_rate=0.4, h=4):
-    """训练神经网络并返回历史记录"""
+def train_neural_network(X_train, Y_train, X_test, Y_test, activation_type, loop=8000, learn_rate=0.4, h=4, use_softmax=True):
+    """训练神经网络并返回历史记录
+    
+    参数:
+        X_train, Y_train: 训练集
+        X_test, Y_test: 测试集
+        activation_type: 隐藏层激活函数类型
+        loop: 训练迭代次数
+        learn_rate: 学习率
+        h: 隐藏层神经元数量
+        use_softmax: 是否使用softmax（多分类）
+    
+    返回:
+        包含训练结果和历史的字典
+    """
     np.random.seed(42)  # 确保每次训练使用相同的初始权重
     
     n_features = X_train.shape[0]
+    n_classes = Y_train.shape[0] if use_softmax else 1
     
     # 初始化参数
     w1 = np.random.randn(n_features, h) * 0.01
     b1 = np.zeros((h, 1))
-    w2 = np.random.randn(h, 1) * 0.01
-    b2 = np.zeros((1, 1))
+    w2 = np.random.randn(h, n_classes) * 0.01
+    b2 = np.zeros((n_classes, 1))
     
     loss_history = []
     train_acc_history = []
     test_acc_history = []
     
     print(f"\n{'='*60}")
-    print(f"训练激活函数: {activation_type}")
+    print(f"训练激活函数: {activation_type} {'(Softmax多分类)' if use_softmax else '(Sigmoid二分类)'}")
     print(f"{'='*60}")
     
     for i in range(loop):
-        z1, a1, a2 = forward_propagation(X_train, w1, b1, w2, b2, activation=activation_type)
-        loss = logistic_loss(a2, Y_train)
+        z1, a1, z2, a2 = forward_propagation(X_train, w1, b1, w2, b2, 
+                                              activation=activation_type, 
+                                              use_softmax=use_softmax)
         
-        dw1, db1, dw2, db2 = backward_propagation(X_train, Y_train, w2, z1, a1, a2, activation=activation_type)
+        # 选择损失函数
+        if use_softmax:
+            loss = cross_entropy_loss(a2, Y_train)
+        else:
+            loss = logistic_loss(a2, Y_train)
+        
+        dw1, db1, dw2, db2 = backward_propagation(X_train, Y_train, w2, z1, a1, z2, a2, 
+                                                   activation=activation_type,
+                                                   use_softmax=use_softmax)
         
         w1 = w1 - learn_rate * dw1
         b1 = b1 - learn_rate * db1
@@ -284,11 +401,11 @@ def train_neural_network(X_train, Y_train, X_test, Y_test, activation_type, loop
         if i % 100 == 0:
             loss_history.append(loss)
             
-            Y_pred_train = predict(X_train, w1, b1, w2, b2, activation=activation_type)
+            Y_pred_train = predict(X_train, w1, b1, w2, b2, activation=activation_type, use_softmax=use_softmax)
             train_acc = accuracy(Y_pred_train, Y_train)
             train_acc_history.append(train_acc)
             
-            Y_pred_test = predict(X_test, w1, b1, w2, b2, activation=activation_type)
+            Y_pred_test = predict(X_test, w1, b1, w2, b2, activation=activation_type, use_softmax=use_softmax)
             test_acc = accuracy(Y_pred_test, Y_test)
             test_acc_history.append(test_acc)
             
@@ -296,9 +413,9 @@ def train_neural_network(X_train, Y_train, X_test, Y_test, activation_type, loop
                 print(f"Iteration {i:5d}, Loss: {loss:.6f}, Train Acc: {train_acc:.4f}, Test Acc: {test_acc:.4f}")
     
     # 最终准确率
-    Y_pred_test = predict(X_test, w1, b1, w2, b2, activation=activation_type)
+    Y_pred_test = predict(X_test, w1, b1, w2, b2, activation=activation_type, use_softmax=use_softmax)
     final_test_acc = accuracy(Y_pred_test, Y_test)
-    Y_pred_train = predict(X_train, w1, b1, w2, b2, activation=activation_type)
+    Y_pred_train = predict(X_train, w1, b1, w2, b2, activation=activation_type, use_softmax=use_softmax)
     final_train_acc = accuracy(Y_pred_train, Y_train)
     
     print(f"\n最终结果 - 训练集准确率: {final_train_acc*100:.2f}%, 测试集准确率: {final_test_acc*100:.2f}%")
@@ -312,8 +429,18 @@ def train_neural_network(X_train, Y_train, X_test, Y_test, activation_type, loop
         'final_test_acc': final_test_acc
     }
 
-def plot_decision_boundary(X, Y, w1, b1, w2, b2, ax, activation='tanh', title='Decision Boundary'):
-    """绘制决策边界"""
+def plot_decision_boundary(X, Y, w1, b1, w2, b2, ax, activation='tanh', use_softmax=True, title='Decision Boundary'):
+    """绘制决策边界
+    
+    参数:
+        X: 输入数据 (n_features, m)
+        Y: 标签数据（one-hot或原始）
+        w1, b1, w2, b2: 网络参数
+        ax: matplotlib轴对象
+        activation: 隐藏层激活函数
+        use_softmax: 是否使用softmax
+        title: 图表标题
+    """
     x_min, x_max = X[0, :].min() - 0.5, X[0, :].max() + 0.5
     y_min, y_max = X[1, :].min() - 0.5, X[1, :].max() + 0.5
     
@@ -321,11 +448,24 @@ def plot_decision_boundary(X, Y, w1, b1, w2, b2, ax, activation='tanh', title='D
                          np.arange(y_min, y_max, 0.02))
     
     grid_points = np.c_[xx.ravel(), yy.ravel()].T
-    predictions = predict(grid_points, w1, b1, w2, b2, activation=activation)
+    predictions = predict(grid_points, w1, b1, w2, b2, activation=activation, use_softmax=use_softmax)
     predictions = predictions.reshape(xx.shape)
     
-    ax.contourf(xx, yy, predictions, cmap=plt.cm.RdBu, alpha=0.3)
-    ax.scatter(X[0, :], X[1, :], c=Y[0, :], cmap=plt.cm.RdBu, edgecolors='k', s=30)
+    # 如果是多分类，使用不同的colormap
+    if use_softmax and predictions.max() > 1:
+        cmap = plt.cm.RdYlBu
+    else:
+        cmap = plt.cm.RdBu
+    
+    ax.contourf(xx, yy, predictions, cmap=cmap, alpha=0.3)
+    
+    # 将Y转换为适合可视化的格式
+    if Y.ndim > 1 and Y.shape[0] > 1:
+        Y_vis = np.argmax(Y, axis=0)
+    else:
+        Y_vis = Y[0, :] if Y.ndim > 1 else Y
+    
+    ax.scatter(X[0, :], X[1, :], c=Y_vis, cmap=cmap, edgecolors='k', s=30)
     ax.set_xlabel('Feature 1', fontsize=10)
     ax.set_ylabel('Feature 2', fontsize=10)
     ax.set_title(title, fontsize=12, fontweight='bold')
@@ -410,6 +550,7 @@ def visualize_results(results, activation_types=None, loop_count=20000, X_train=
                 result['w1'], result['b1'], result['w2'], result['b2'],
                 ax2, 
                 activation=act_type,
+                use_softmax=True,  # 使用softmax多分类
                 title=f'{act_type.upper()} - Decision Boundary'
             )
 
@@ -424,18 +565,19 @@ def visualize_results(results, activation_types=None, loop_count=20000, X_train=
 # ==================== 7. 主函数 ====================
 def main():
     """主函数：执行完整的激活函数对比实验"""
-    # 加载和准备数据
+    # 加载和准备数据（使用make_blobs生成）
     X_train, Y_train, X_test, Y_test, y_train_raw, y_test_raw, encoder = load_and_prepare_data(
         n_samples=1000,
         n_features=2,
-        n_classes=3,
+        n_classes=6,
         test_size=0.2,
-        random_state=24,
-        show_plot=True  # 显示数据可视化图像
+        random_state=60,
+        show_plot=False,  # 显示数据可视化图像
+        cluster_std=1.0  # 控制数据簇的分散程度
     )
-    """
-    # 训练所有激活函数
-    activation_types = ['relu', 'leaky_relu', 'tanh', 'sigmoid']
+    
+    # 训练所有激活函数（使用softmax多分类）
+    activation_types = ['relu', 'leaky_relu', 'tanh']  # sigmoid不适用于多分类
     results = train_all_activations(
         X_train, Y_train, X_test, Y_test,
         activation_types=activation_types,
@@ -454,7 +596,7 @@ def main():
     )
     
     return results
-    """
+
 
 # ==================== 8. 程序入口 ====================
 if __name__ == "__main__":
