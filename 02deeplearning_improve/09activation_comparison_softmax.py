@@ -64,18 +64,32 @@ def generate_multiclass_data(
 def visualize_dataset(X, y, title="多分类数据集"):
     """
     可视化数据集
-    
+
     参数:
-        X: 特征数据（需要是2维以便可视化）
+        X: 特征数据 (n_features, m) 或 (m, n_features)
         y: 标签数据
         title: 图表标题
     """
-    if X.shape[1] != 2:
-        print("警告：只有2维特征才能可视化，当前特征维度:", X.shape[1])
+    # 确保X为 (m, n_features) 格式
+    if X.shape[0] < X.shape[1] and X.shape[0] <= 10:
+        X_plot = X.T  # 转为 (m, n_features)
+    else:
+        X_plot = X
+
+    n_feat = X_plot.shape[1]
+
+    if n_feat > 2:
+        from sklearn.decomposition import PCA
+        X_2d = PCA(n_components=2).fit_transform(X_plot)
+        title += f" (PCA降维: {n_feat}D→2D)"
+    elif n_feat < 2:
+        print("警告：至少需要2维特征才能可视化，当前特征维度:", n_feat)
         return
-    
+    else:
+        X_2d = X_plot
+
     plt.figure(figsize=(8, 5))
-    scatter = plt.scatter(X[:, 0], X[:, 1], c=y, cmap="viridis", s=30, edgecolors='k', linewidth=0.5)
+    scatter = plt.scatter(X_2d[:, 0], X_2d[:, 1], c=y, cmap="viridis", s=30, edgecolors='k', linewidth=0.5)
     plt.title(title, fontsize=14)
     plt.xlabel("Feature 1", fontsize=12)
     plt.ylabel("Feature 2", fontsize=12)
@@ -431,7 +445,7 @@ def train_neural_network(X_train, Y_train, X_test, Y_test, activation_type, loop
 
 def plot_decision_boundary(X, Y, w1, b1, w2, b2, ax, activation='tanh', use_softmax=True, title='Decision Boundary'):
     """绘制决策边界
-    
+
     参数:
         X: 输入数据 (n_features, m)
         Y: 标签数据（one-hot或原始）
@@ -441,33 +455,51 @@ def plot_decision_boundary(X, Y, w1, b1, w2, b2, ax, activation='tanh', use_soft
         use_softmax: 是否使用softmax
         title: 图表标题
     """
-    x_min, x_max = X[0, :].min() - 0.5, X[0, :].max() + 0.5
-    y_min, y_max = X[1, :].min() - 0.5, X[1, :].max() + 0.5
-    
+    n_features = X.shape[0]
+
+    if n_features > 2:
+        # 高维：PCA降维到2D用于可视化
+        from sklearn.decomposition import PCA
+        pca = PCA(n_components=2).fit(X.T)
+        X_2d = pca.transform(X.T).T  # (2, m)
+    else:
+        X_2d = X
+
+    x_min, x_max = X_2d[0, :].min() - 0.5, X_2d[0, :].max() + 0.5
+    y_min, y_max = X_2d[1, :].min() - 0.5, X_2d[1, :].max() + 0.5
+
     xx, yy = np.meshgrid(np.arange(x_min, x_max, 0.02),
                          np.arange(y_min, y_max, 0.02))
-    
-    grid_points = np.c_[xx.ravel(), yy.ravel()].T
+
+    grid_2d = np.c_[xx.ravel(), yy.ravel()].T  # (2, grid_size)
+
+    if n_features > 2:
+        # 将2D网格点逆变换回原始特征空间
+        grid_points = pca.inverse_transform(grid_2d.T).T  # (n_features, grid_size)
+    else:
+        grid_points = grid_2d
+
     predictions = predict(grid_points, w1, b1, w2, b2, activation=activation, use_softmax=use_softmax)
     predictions = predictions.reshape(xx.shape)
-    
+
     # 如果是多分类，使用不同的colormap
     if use_softmax and predictions.max() > 1:
         cmap = plt.cm.RdYlBu
     else:
         cmap = plt.cm.RdBu
-    
+
     ax.contourf(xx, yy, predictions, cmap=cmap, alpha=0.3)
-    
+
     # 将Y转换为适合可视化的格式
     if Y.ndim > 1 and Y.shape[0] > 1:
         Y_vis = np.argmax(Y, axis=0)
     else:
         Y_vis = Y[0, :] if Y.ndim > 1 else Y
-    
-    ax.scatter(X[0, :], X[1, :], c=Y_vis, cmap=cmap, edgecolors='k', s=30)
-    ax.set_xlabel('Feature 1', fontsize=10)
-    ax.set_ylabel('Feature 2', fontsize=10)
+
+    ax.scatter(X_2d[0, :], X_2d[1, :], c=Y_vis, cmap=cmap, edgecolors='k', s=30)
+    feat_label = "PCA " if n_features > 2 else ""
+    ax.set_xlabel(f'{feat_label}Feature 1', fontsize=10)
+    ax.set_ylabel(f'{feat_label}Feature 2', fontsize=10)
     ax.set_title(title, fontsize=12, fontweight='bold')
     ax.set_xlim([x_min, x_max])
     ax.set_ylim([y_min, y_max])
@@ -563,34 +595,38 @@ def visualize_results(results, activation_types=None, loop_count=20000, X_train=
 
 
 # ==================== 7. 主函数 ====================
-def main():
-    """主函数：执行完整的激活函数对比实验"""
+def main(n_features=4):
+    """主函数：执行完整的激活函数对比实验
+
+    参数:
+        n_features: 特征数量（>=2时使用PCA降维可视化，=2时直接绘制）
+    """
     # 加载和准备数据（使用make_blobs生成）
     X_train, Y_train, X_test, Y_test, y_train_raw, y_test_raw, encoder = load_and_prepare_data(
-        n_samples=1000,
-        n_features=2,
-        n_classes=6,
+        n_samples=2000,
+        n_features=n_features,
+        n_classes=8,
         test_size=0.2,
         random_state=60,
         show_plot=False,  # 显示数据可视化图像
         cluster_std=1.0  # 控制数据簇的分散程度
     )
-    
+    loop_count = 40000
     # 训练所有激活函数（使用softmax多分类）
-    activation_types = ['relu', 'leaky_relu', 'tanh']  # sigmoid不适用于多分类
+    activation_types = ['relu', 'sigmoid']  # sigmoid不适用于多分类
     results = train_all_activations(
         X_train, Y_train, X_test, Y_test,
         activation_types=activation_types,
-        loop_count=20000,
-        learn_rate=0.4,
-        h=8
+        loop_count=loop_count,
+        learn_rate=0.2,
+        h=4
     )
     
     # 可视化结果
     visualize_results(
         results,
         activation_types=activation_types,
-        loop_count=20000,
+        loop_count=loop_count,
         X_train=X_train,
         Y_train=Y_train
     )
