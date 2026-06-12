@@ -119,3 +119,176 @@ $$ f^{[l]} \times f^{[l]} \times n_C^{[l-1]} $$
 
 2. 稀疏连接（sparsity of connections）
 通过3×3的卷积计算得到的下一层某一个元素值，它只依赖于这个3×3的输入的单元格，输出单元（元素0）仅与36个输入特征中9个相连接。而且其它像素值都不会对输出产生任影响，这就是稀疏连接的概念。
+
+## 反向传播
+### 卷积核W反向传播：
+参考文章： https://www.cnblogs.com/pinard/p/6494810.html
+
+已知卷积层的$\boldsymbol{\delta^l}$，推导该层$\boldsymbol{W},\boldsymbol{b}$的梯度
+
+矩阵简化示例（输入为矩阵，非张量），对第$l$层单个卷积核矩阵$W$，导数写作：
+$$
+\frac{\partial J(W,b)}{\partial W_{pq}^l} = \sum_i \sum_j \big(\delta_{ij}^l \, a_{i+p-1,j+q-1}^{l-1}\big)
+$$
+
+设定实例尺寸：输入$a$为$4\times4$矩阵，卷积核$W$为$3\times3$矩阵，输出$z$为$2\times2$矩阵，反向传播得到的$z$层误差$\delta$同样是$2\times2$矩阵。
+
+代入公式展开：
+$$
+\begin{align*}
+\frac{\partial J(W,b)}{\partial W_{11}^l} &= a_{11}\delta_{11} + a_{12}\delta_{12} + a_{21}\delta_{21} + a_{22}\delta_{22} \\
+\frac{\partial J(W,b)}{\partial W_{12}^l} &= a_{12}\delta_{11} + a_{13}\delta_{12} + a_{22}\delta_{21} + a_{23}\delta_{22} \\
+\frac{\partial J(W,b)}{\partial W_{13}^l} &= a_{13}\delta_{11} + a_{14}\delta_{12} + a_{23}\delta_{21} + a_{24}\delta_{22} \\
+\frac{\partial J(W,b)}{\partial W_{21}^l} &= a_{21}\delta_{11} + a_{22}\delta_{12} + a_{31}\delta_{21} + a_{32}\delta_{22} \\
+\end{align*}
+$$
+
+最终一共可得到9个求导式子，整理为矩阵卷积形式：
+$$
+\frac{\partial J(W,b)}{\partial W^l}
+=
+\begin{pmatrix}
+a_{11} & a_{12} & a_{13} & a_{14} \\
+a_{21} & a_{22} & a_{23} & a_{24} \\
+a_{31} & a_{32} & a_{33} & a_{34} \\
+a_{41} & a_{42} & a_{43} & a_{44}
+\end{pmatrix}
+*
+\begin{pmatrix}
+\delta_{11} & \delta_{12} \\
+\delta_{21} & \delta_{22}
+\end{pmatrix}
+$$
+
+由此可以清晰看出本次卷积无需翻转卷积核的原因。
+
+对于偏置$b$，推导略有特殊性：$\delta^l$是高维张量，而$b$仅为向量，不能像DNN中直接令梯度等于$\delta^l$。标准做法是对$\delta^l$各个子矩阵内全部元素逐项求和，得到误差向量，也就是$b$的梯度：
+$$
+\frac{\partial J(W,b)}{\partial b^l} = \sum_{u,v} \big(\delta^l\big)_{u,v}$$
+
+
+如果input有padding，则同样在对w计算梯度时进行padding
+
+### 上一隐藏层的梯度
+1. upsample: 输出层梯度的元素之间插入s - 1个0
+2. 卷积核旋转180度
+3. 反向卷积步长为1
+4. 基于upsample进行padding，p = k - p - 1
+5. 对da  rot180_w 进行步长为1的卷积 得出梯度
+
+s为步长、k为卷积核尺寸、p为padding
+
+
+对于卷积层的反向传播，首先回顾卷积层前向传播公式：
+$$
+a^l = \sigma(z^l) = \sigma\left(a^{l-1} * W^l + b^l\right)
+$$
+其中$n_{in}$为上一隐藏层的输入子矩阵个数。
+
+在DNN中，$\delta^{l-1}$与$\delta^l$的递推关系为：
+$$
+\delta^l = \frac{\partial J(W,b)}{\partial z^l}
+= \left(\frac{\partial z^{l+1}}{\partial z^l}\right)^T \frac{\partial J(W,b)}{\partial z^{l+1}}
+= \left(\frac{\partial z^{l+1}}{\partial z^l}\right)^T \delta^{l+1}
+$$
+
+因此要推导$\delta^{l-1}$和$\delta^l$的递推关系，需要计算$\displaystyle \frac{\partial z^l}{\partial z^{l-1}}$的梯度表达式。
+
+$z^l$与$z^{l-1}$满足：
+$$
+z^l = a^{l-1} * W^l + b^l = \sigma(z^{l-1}) * W^l + b^l
+$$
+
+最终递推公式：
+$$
+\delta^{l-1}
+= \left(\frac{\partial z^l}{\partial z^{l-1}}\right)^T \delta^l
+= \delta^l * \mathrm{rot180}\left(W^l\right) \odot \sigma'\left(z^{l-1}\right)
+$$
+
+该式结构和DNN类似，区别是卷积求导时卷积核需要旋转180°。
+$\mathrm{rot180}()$ 表示先上下翻转、再左右翻转；DNN里此处仅做矩阵转置。
+下面用简单实例直观解释卷积核需要翻转180°的原因。
+
+### 实例设定
+$l-1$层输出$a^{l-1}$为$3\times3$矩阵；第$l$层卷积核$W^l$为$2\times2$矩阵，步幅为1，输出$z^l$为$2\times2$矩阵；简化偏置$b^l=0$，则：
+$$
+a^{l-1} * W^l = z^l
+$$
+
+矩阵形式：
+$$
+\begin{pmatrix}
+a_{11} & a_{12} & a_{13} \\
+a_{21} & a_{22} & a_{23} \\
+a_{31} & a_{32} & a_{33}
+\end{pmatrix}
+*
+\begin{pmatrix}
+w_{11} & w_{12} \\
+w_{21} & w_{22}
+\end{pmatrix}
+=
+\begin{pmatrix}
+z_{11} & z_{12} \\
+z_{21} & z_{22}
+\end{pmatrix}
+$$
+
+根据卷积定义展开：
+$$
+\begin{align*}
+z_{11} &= a_{11}w_{11} + a_{12}w_{12} + a_{21}w_{21} + a_{22}w_{22} \\
+z_{12} &= a_{12}w_{11} + a_{13}w_{12} + a_{22}w_{21} + a_{23}w_{22} \\
+z_{21} &= a_{21}w_{11} + a_{22}w_{12} + a_{31}w_{21} + a_{32}w_{22} \\
+z_{22} &= a_{22}w_{11} + a_{23}w_{12} + a_{32}w_{21} + a_{33}w_{22}
+\end{align*}
+$$
+
+### 反向求导推导
+$$
+\nabla a^{l-1}
+= \frac{\partial J(W,b)}{\partial a^{l-1}}
+= \left(\frac{\partial z^l}{\partial a^{l-1}}\right)^T \frac{\partial J(W,b)}{\partial z^l}
+= \left(\frac{\partial z^l}{\partial a^{l-1}}\right)^T \delta^l
+$$
+
+设$z$层误差矩阵由$\delta_{11},\delta_{12},\delta_{21},\delta_{22}$构成$2\times2$矩阵，逐个计算$a^{l-1}$各元素梯度：
+
+$$
+\begin{align*}
+\nabla a_{11} &= \delta_{11} w_{11} \\
+\nabla a_{12} &= \delta_{11} w_{12} + \delta_{12} w_{11} \\
+\nabla a_{13} &= \delta_{12} w_{12} \\
+\nabla a_{21} &= \delta_{11} w_{21} + \delta_{21} w_{11} \\
+\nabla a_{22} &= \delta_{11} w_{22} + \delta_{12} w_{21} + \delta_{21} w_{12} + \delta_{22} w_{11} \\
+\nabla a_{23} &= \delta_{12} w_{22} + \delta_{22} w_{12} \\
+\nabla a_{31} &= \delta_{21} w_{21} \\
+\nabla a_{32} &= \delta_{21} w_{22} + \delta_{22} w_{21} \\
+\nabla a_{33} &= \delta_{22} w_{22}
+\end{align*}
+$$
+
+### 整理为卷积矩阵形式
+对误差矩阵外围补一圈0做padding，再用翻转180°后的卷积核做卷积，即可一次性得到全部梯度：
+$$
+\begin{pmatrix}
+0 & 0 & 0 & 0 \\
+0 & \delta_{11} & \delta_{12} & 0 \\
+0 & \delta_{21} & \delta_{22} & 0 \\
+0 & 0 & 0 & 0
+\end{pmatrix}
+*
+\begin{pmatrix}
+w_{22} & w_{21} \\
+w_{12} & w_{11}
+\end{pmatrix}
+=
+\begin{pmatrix}
+\nabla a_{11} & \nabla a_{12} & \nabla a_{13} \\
+\nabla a_{21} & \nabla a_{22} & \nabla a_{23} \\
+\nabla a_{31} & \nabla a_{32} & \nabla a_{33}
+\end{pmatrix}
+$$
+
+本例直观说明：卷积层反向传播时，必须先把卷积核旋转180°，再和误差矩阵做卷积运算。如果有stride > 1，则需对误差矩阵进行padding。
