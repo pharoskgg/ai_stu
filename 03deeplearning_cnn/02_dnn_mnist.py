@@ -222,7 +222,7 @@ def one_hot_encode(y, num_classes):
     one_hot[y, np.arange(m)] = 1
     return one_hot
 
-def train(X_train, y_train, X_test, y_test, hidden_size=128, activation='relu', learning_rate=0.01, epochs=20):
+def train(X_train, y_train, X_test, y_test, hidden_size=128, activation='relu', use_Adam=False, beta1=0.9, beta2=0.999, learn_rate=0.01, epochs=20, epsilon=1e-8):
     """训练DNN模型"""
     # 将标签转换为one-hot编码
     Y_train = one_hot_encode(y_train, num_classes=10)
@@ -237,43 +237,92 @@ def train(X_train, y_train, X_test, y_test, hidden_size=128, activation='relu', 
     w2 = np.random.randn(hidden_size, n_classes) * 0.01
     b2 = np.zeros((n_classes, 1))
 
+    if use_Adam:
+        v_dw1 = np.zeros_like(w1)
+        v_db1 = np.zeros_like(b1)
+        v_dw2 = np.zeros_like(w2)
+        v_db2 = np.zeros_like(b2)
+        s_dw1 = np.zeros_like(w1)
+        s_db1 = np.zeros_like(b1)
+        s_dw2 = np.zeros_like(w2)
+        s_db2 = np.zeros_like(b2)
+
     loss_history = []
     train_acc_history = []
     test_acc_history = []
 
     # 训练循环
     for epoch in range(epochs):
+        epoch_loss = 0
+        num_batches = 0
+        
         # 使用minibatch训练
         for i in range(0, X_train.shape[1], 128):
             X_batch = X_train[:, i:i+128]
             Y_batch = Y_train[:, i:i+128]
-
 
             # 前向传播
             z1, a1, z2, a2 = forward_propagation(X_batch, w1, b1, w2, b2, activation=activation, use_softmax=True)
             
             # 计算损失
             loss = cross_entropy_loss(a2, Y_batch)
-            loss_history.append(loss)
+            epoch_loss += loss
+            num_batches += 1
             
             # 反向传播
             dw1, db1, dw2, db2 = backward_propagation(X_batch, Y_batch, w2, z1, a1, z2, a2, activation=activation, use_softmax=True)
             
             # 更新参数
-            w1 -= learning_rate * dw1
-            b1 -= learning_rate * db1
-            w2 -= learning_rate * dw2
-            b2 -= learning_rate * db2
-            
-            # 每5个epoch评估一次模型性能
-            if (epoch + 1) % 5 == 0:
-                train_pred = predict(X_train, w1, b1, w2, b2, activation=activation, use_softmax=True)
-                test_pred = predict(X_test, w1, b1, w2, b2, activation=activation, use_softmax=True)
-                train_acc = accuracy(train_pred, y_train)
-                test_acc = accuracy(test_pred, y_test)
-                train_acc_history.append(train_acc)
-                test_acc_history.append(test_acc)
-                print(f"Epoch {epoch + 1}/{epochs} - Loss: {loss:.4f} - Train Acc: {train_acc:.4f} - Test Acc: {test_acc:.4f}")
+            if use_Adam:
+                t = epoch * (X_train.shape[1] // 128 + 1) + (i // 128) + 1
+                
+                # 更新Adam变量
+                v_dw1 = beta1 * v_dw1 + (1 - beta1) * dw1
+                v_db1 = beta1 * v_db1 + (1 - beta1) * db1
+                v_dw2 = beta1 * v_dw2 + (1 - beta1) * dw2
+                v_db2 = beta1 * v_db2 + (1 - beta1) * db2
+
+                s_dw1 = beta2 * s_dw1 + (1 - beta2) * dw1 ** 2
+                s_db1 = beta2 * s_db1 + (1 - beta2) * db1 ** 2
+                s_dw2 = beta2 * s_dw2 + (1 - beta2) * dw2 ** 2
+                s_db2 = beta2 * s_db2 + (1 - beta2) * db2 ** 2
+
+                # 修正偏差
+                v_dw1_corrected = v_dw1 / (1 - beta1 ** t)
+                v_db1_corrected = v_db1 / (1 - beta1 ** t)
+                v_dw2_corrected = v_dw2 / (1 - beta1 ** t)
+                v_db2_corrected = v_db2 / (1 - beta1 ** t)
+                s_dw1_corrected = s_dw1 / (1 - beta2 ** t)
+                s_db1_corrected = s_db1 / (1 - beta2 ** t)
+                s_dw2_corrected = s_dw2 / (1 - beta2 ** t)
+                s_db2_corrected = s_db2 / (1 - beta2 ** t)
+
+                # 更新参数
+                w1 = w1 - (learn_rate / (np.sqrt(s_dw1_corrected) + epsilon)) * v_dw1_corrected
+                b1 = b1 - (learn_rate / (np.sqrt(s_db1_corrected) + epsilon)) * v_db1_corrected
+                w2 = w2 - (learn_rate / (np.sqrt(s_dw2_corrected) + epsilon)) * v_dw2_corrected
+                b2 = b2 - (learn_rate / (np.sqrt(s_db2_corrected) + epsilon)) * v_db2_corrected
+
+            else:
+                w1 = w1 - learn_rate * dw1
+                b1 = b1 - learn_rate * db1
+                w2 = w2 - learn_rate * dw2
+                b2 = b2 - learn_rate * db2
+            # print(f"Epoch {epoch + 1}/{epochs} - Batch {i // 128 + 1} - Loss: {loss:.4f}")
+        
+        # 记录平均损失
+        avg_loss = epoch_loss / num_batches
+        loss_history.append(avg_loss)
+        
+        # 每5个epoch评估一次模型性能
+        if (epoch + 1) % 1 == 0:
+            train_pred = predict(X_train, w1, b1, w2, b2, activation=activation, use_softmax=True)
+            test_pred = predict(X_test, w1, b1, w2, b2, activation=activation, use_softmax=True)
+            train_acc = accuracy(train_pred, y_train)
+            test_acc = accuracy(test_pred, y_test)
+            train_acc_history.append(train_acc)
+            test_acc_history.append(test_acc)
+            print(f"Epoch {epoch + 1}/{epochs} - Loss: {avg_loss:.4f} - Train Acc: {train_acc:.4f} - Test Acc: {test_acc:.4f}")
 
     return loss_history, train_acc_history, test_acc_history
 
@@ -301,14 +350,12 @@ def main():
 
     # 数据处理，拉平成一维数据
     X_train = loader.X_train.reshape(loader.X_train.shape[0], -1).T  # (784, 60000)
-    # DataLoader已设置normalize=True，数据已在[0,1]区间，无需再次归一化
     y_train = loader.y_train  # (60000,)
     X_test = loader.X_test.reshape(loader.X_test.shape[0], -1).T
-    # DataLoader已设置normalize=True，数据已在[0,1]区间，无需再次归一化
     y_test = loader.y_test
 
     # 训练模型
-    loss_history, train_acc_history, test_acc_history = train(X_train, y_train, X_test, y_test, hidden_size=128, activation='relu', learning_rate=0.01, epochs=20)
+    loss_history, train_acc_history, test_acc_history = train(X_train, y_train, X_test, y_test, hidden_size=64, activation='relu', learn_rate=0.01, epochs=200, use_Adam=True)
 
     # 可视化训练过程
     plt.figure(figsize=(12, 5))
