@@ -91,61 +91,79 @@ def cnn_forward(X_batch, params):
     W2 = params['W2']  # (64, 32, 3, 3) - 64个3x3卷积核
     b2 = params['b2']  # (64,)
     
+    # 动态计算第2层输出尺寸
+    _, input_h_2, input_w_2 = a1.shape[1:]  # (32, 50, 50)
+    kernel_h_2, kernel_w_2 = W2.shape[2:]   # (3, 3)
+    output_h_2 = (input_h_2 - kernel_h_2) // 2 + 1  # stride=2
+    output_w_2 = (input_w_2 - kernel_w_2) // 2 + 1
+    
     conv2_outputs = []
     for i in range(batch_size):
         conv2_sample = []
         for k in range(W2.shape[0]):  # 对每个输出通道
-            conv_result = np.zeros((24, 24))
+            conv_result = np.zeros((output_h_2, output_w_2))
             for c in range(W2.shape[1]):  # 对每个输入通道
                 conv_result += convolution2d(a1[i, c], W2[k, c], padding=0, stride=2)
             conv_result += b2[k]
             conv2_sample.append(conv_result)
-        conv2_outputs.append(np.array(conv2_sample))  # (64, 24, 24)
+        conv2_outputs.append(np.array(conv2_sample))  # (64, output_h_2, output_w_2)
     
-    conv2_outputs = np.array(conv2_outputs)  # (batch_size, 64, 24, 24)
+    conv2_outputs = np.array(conv2_outputs)  # (batch_size, 64, output_h_2, output_w_2)
     a2 = relu(conv2_outputs)
     
     # 第3层卷积: 24x24 -> 11x11 (使用3x3卷积核，stride=2, padding=0)
     W3 = params['W3']  # (128, 64, 3, 3) - 128个3x3卷积核
     b3 = params['b3']  # (128,)
     
+    # 动态计算第3层输出尺寸
+    _, input_h_3, input_w_3 = a2.shape[1:]  # (64, output_h_2, output_w_2)
+    kernel_h_3, kernel_w_3 = W3.shape[2:]   # (3, 3)
+    output_h_3 = (input_h_3 - kernel_h_3) // 2 + 1  # stride=2
+    output_w_3 = (input_w_3 - kernel_w_3) // 2 + 1
+    
     conv3_outputs = []
     for i in range(batch_size):
         conv3_sample = []
         for k in range(W3.shape[0]):
-            conv_result = np.zeros((11, 11))
+            conv_result = np.zeros((output_h_3, output_w_3))
             for c in range(W3.shape[1]):
                 conv_result += convolution2d(a2[i, c], W3[k, c], padding=0, stride=2)
             conv_result += b3[k]
             conv3_sample.append(conv_result)
-        conv3_outputs.append(np.array(conv3_sample))  # (128, 11, 11)
+        conv3_outputs.append(np.array(conv3_sample))  # (128, output_h_3, output_w_3)
     
-    conv3_outputs = np.array(conv3_outputs)  # (batch_size, 128, 11, 11)
+    conv3_outputs = np.array(conv3_outputs)  # (batch_size, 128, output_h_3, output_w_3)
     a3 = relu(conv3_outputs)
     
     # 第4层卷积: 11x11 -> 5x5 (使用3x3卷积核，stride=2, padding=0)
     W4 = params['W4']  # (256, 128, 3, 3) - 256个3x3卷积核
     b4 = params['b4']  # (256,)
     
+    # 动态计算第4层输出尺寸
+    _, input_h_4, input_w_4 = a3.shape[1:]  # (128, output_h_3, output_w_3)
+    kernel_h_4, kernel_w_4 = W4.shape[2:]   # (3, 3)
+    output_h_4 = (input_h_4 - kernel_h_4) // 2 + 1  # stride=2
+    output_w_4 = (input_w_4 - kernel_w_4) // 2 + 1
+    
     conv4_outputs = []
     for i in range(batch_size):
         conv4_sample = []
         for k in range(W4.shape[0]):
-            conv_result = np.zeros((5, 5))
+            conv_result = np.zeros((output_h_4, output_w_4))
             for c in range(W4.shape[1]):
                 conv_result += convolution2d(a3[i, c], W4[k, c], padding=0, stride=2)
             conv_result += b4[k]
             conv4_sample.append(conv_result)
-        conv4_outputs.append(np.array(conv4_sample))  # (256, 5, 5)
+        conv4_outputs.append(np.array(conv4_sample))  # (256, output_h_4, output_w_4)
     
-    conv4_outputs = np.array(conv4_outputs)  # (batch_size, 256, 5, 5)
+    conv4_outputs = np.array(conv4_outputs)  # (batch_size, 256, output_h_4, output_w_4)
     a4 = relu(conv4_outputs)
     
-    # 拉平: (batch_size, 256, 5, 5) -> (batch_size, 6400)
-    flattened = a4.reshape(batch_size, -1)  # (batch_size, 6400)
+    # 拉平: (batch_size, 256, output_h_4, output_w_4) -> (batch_size, flattened_size)
+    flattened = a4.reshape(batch_size, -1)  # (batch_size, flattened_size)
     
-    # 第1层全连接: 6400 -> 512
-    W5 = params['W5']  # (6400, 512)
+    # 第1层全连接: flattened_size -> 512
+    W5 = params['W5']  # (flattened_size, 512)
     b5 = params['b5']  # (512, 1)
     z5 = np.dot(flattened, W5) + b5.T  # (batch_size, 512)
     a5 = relu(z5.T)  # (512, batch_size)
@@ -209,21 +227,28 @@ def cnn_backward(caches, Y, params):
     dW5 = np.dot(caches['flattened'].T, dz5.T) / batch_size  # (6400, 512)
     db5 = np.sum(dz5, axis=1, keepdims=True) / batch_size  # (512, 1)
     
+    # 获取第4层卷积的输出通道数和空间尺寸
+    num_output_channels_4 = params['W4'].shape[0]  # 256
+    num_input_channels_4 = params['W4'].shape[1]   # 128
+    
+    # 从缓存中获取第4层卷积输出的空间尺寸
+    _, _, height_4, width_4 = caches['a4'].shape  # (batch_size, 256, 5, 5)
+    
     # 重塑回卷积层输出形状
-    da4 = dflattened.reshape(batch_size, 256, 5, 5)  # (batch_size, 256, 5, 5)
+    da4 = dflattened.reshape(batch_size, num_output_channels_4, height_4, width_4)
     
     # 第4层卷积梯度 - 使用已有的conv2dGradient组件
     dW4 = np.zeros_like(params['W4'])
     db4 = np.zeros_like(params['b4'])
     
     for i in range(batch_size):
-        for k in range(256):  # 输出通道
+        for k in range(num_output_channels_4):  # 输出通道
             bias_grad_sum = 0
-            for c in range(128):  # 输入通道
+            for c in range(num_input_channels_4):  # 输入通道
                 # 使用已有的反向传播组件
                 # conv2dGradient(outGradent, input, kernel, stride=1, padding=0)
                 input_grad, kernel_grad, bias_grad = conv2dGradient(
-                    da4[i, k],           # 输出梯度 (5, 5)
+                    da4[i, k],           # 输出梯度 (height_4, width_4)
                     caches['a3'][i, c],  # 输入 (11, 11)  
                     params['W4'][k, c],  # 卷积核 (3, 3)
                     stride=2,            # stride=2
@@ -252,7 +277,11 @@ def cnn_backward(caches, Y, params):
 
 # ==================== 4. 参数初始化 ====================
 
-def initialize_parameters():
+def calculate_output_size(input_size, kernel_size, stride, padding=0):
+    """计算卷积输出尺寸"""
+    return (input_size - kernel_size + 2 * padding) // stride + 1
+
+def initialize_parameters(input_height=100, input_width=100):
     """初始化CNN网络参数（无池化层）"""
     params = {}
     
@@ -269,8 +298,27 @@ def initialize_parameters():
     params['W4'] = np.random.randn(256, 128, 3, 3) * 0.1  # 256个3x3卷积核
     params['b4'] = np.zeros((256,))
     
-    # 全连接层参数（更新输入维度为6400）
-    params['W5'] = np.random.randn(6400, 512) * 0.1  # 6400 -> 512
+    # 动态计算全连接层输入维度
+    # 第1层: 100x100 -> 50x50 (stride=2, kernel=3)
+    h1 = calculate_output_size(input_height, 3, 2)
+    w1 = calculate_output_size(input_width, 3, 2)
+    
+    # 第2层: 50x50 -> 24x24 (stride=2, kernel=3)
+    h2 = calculate_output_size(h1, 3, 2)
+    w2 = calculate_output_size(w1, 3, 2)
+    
+    # 第3层: 24x24 -> 11x11 (stride=2, kernel=3)
+    h3 = calculate_output_size(h2, 3, 2)
+    w3 = calculate_output_size(w2, 3, 2)
+    
+    # 第4层: 11x11 -> 5x5 (stride=2, kernel=3)
+    h4 = calculate_output_size(h3, 3, 2)
+    w4 = calculate_output_size(w3, 3, 2)
+    
+    flattened_size = 256 * h4 * w4
+    
+    # 全连接层参数
+    params['W5'] = np.random.randn(flattened_size, 512) * 0.1  # flattened_size -> 512
     params['b5'] = np.zeros((512, 1))
     
     params['W6'] = np.random.randn(512, 10) * 0.1  # 512 -> 10
