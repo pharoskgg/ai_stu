@@ -1,35 +1,93 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
+def _ensure_tuple(value, length=2):
+    if isinstance(value, tuple):
+        return value
+    return (value,) * length
+
+
+def _pad_input(input, padding):
+    pad_h, pad_w = _ensure_tuple(padding)
+    if pad_h == 0 and pad_w == 0:
+        return input
+    return np.pad(input, ((pad_h, pad_h), (pad_w, pad_w)), mode='constant')
+
+
+def _im2col(input_padded, kernel_height, kernel_width, stride=1):
+    input_height, input_width = input_padded.shape
+    output_height = (input_height - kernel_height) // stride + 1
+    output_width = (input_width - kernel_width) // stride + 1
+
+    if output_height <= 0 or output_width <= 0:
+        return np.zeros((0, kernel_height * kernel_width), dtype=input_padded.dtype)
+
+    shape = (output_height, output_width, kernel_height, kernel_width)
+    strides = (
+        input_padded.strides[0] * stride,
+        input_padded.strides[1] * stride,
+        input_padded.strides[0],
+        input_padded.strides[1]
+    )
+    cols = np.lib.stride_tricks.as_strided(input_padded, shape=shape, strides=strides)
+    return cols.reshape(output_height * output_width, kernel_height * kernel_width)
+
+
 def convolution2d(input, kernel, padding=0, stride=1):
-    # 获取输入和卷积核的尺寸
     input_height, input_width = input.shape
     kernel_height, kernel_width = kernel.shape
 
-    # 计算输出尺寸
-    output_height = (input_height - kernel_height + 2 * padding) // stride + 1
-    output_width = (input_width - kernel_width + 2 * padding) // stride + 1
+    input_padded = _pad_input(input, padding)
+    output_height = (input_padded.shape[0] - kernel_height) // stride + 1
+    output_width = (input_padded.shape[1] - kernel_width) // stride + 1
 
-    # 初始化输出矩阵
-    output = np.zeros((output_height, output_width))
+    if output_height <= 0 or output_width <= 0:
+        return np.zeros((0, 0), dtype=input.dtype)
 
-    # 对输入进行填充
-    if padding > 0:
-        input_padded = np.zeros((input_height + 2 * padding, input_width + 2 * padding))
-        input_padded[padding:padding + input_height, padding:padding + input_width] = input
-    else:
-        input_padded = input
-    
-    # 进行卷积操作
-    for i in range(0, output_height):
-        for j in range(0, output_width):
-            # 计算卷积核覆盖的输入区域
-            input_region = input_padded[i*stride:i*stride+kernel_height, j*stride:j*stride+kernel_width]
-            
-            # 计算卷积结果
-            output[i, j] = np.sum(input_region * kernel)
-    
-    return output
+    cols = _im2col(input_padded, kernel_height, kernel_width, stride)
+    output = cols.dot(kernel.flatten())
+    return output.reshape(output_height, output_width)
+
+
+def convolution2d_multi(input, kernels, padding=0, stride=1):
+    """
+    对单张输入图像应用多个卷积核，返回多个通道的输出。
+    """
+    num_kernels, kernel_height, kernel_width = kernels.shape
+    input_padded = _pad_input(input, padding)
+
+    output_height = (input_padded.shape[0] - kernel_height) // stride + 1
+    output_width = (input_padded.shape[1] - kernel_width) // stride + 1
+
+    if output_height <= 0 or output_width <= 0:
+        return np.zeros((num_kernels, 0, 0), dtype=input.dtype)
+
+    cols = _im2col(input_padded, kernel_height, kernel_width, stride)
+    kernel_matrix = kernels.reshape(num_kernels, -1)
+    output = kernel_matrix.dot(cols.T)
+    return output.reshape(num_kernels, output_height, output_width)
+
+
+def convolution2d_batch(inputs, kernels, padding=0, stride=1):
+    """
+    对一个批次的单通道图像应用多个卷积核。
+    """
+    batch_size = inputs.shape[0]
+    return np.stack([
+        convolution2d_multi(inputs[i], kernels, padding=padding, stride=stride)
+        for i in range(batch_size)
+    ], axis=0)
+
+
+def _upsample(outGradient, stride):
+    if stride <= 1:
+        return outGradient
+
+    out_height, out_width = outGradient.shape
+    upsampled = np.zeros((out_height * stride - (stride - 1), out_width * stride - (stride - 1)), dtype=outGradient.dtype)
+    upsampled[::stride, ::stride] = outGradient
+    return upsampled
+
 
 def convolution3d(input, kernel, padding=0, stride=1):
     # 获取输入和卷积核的尺寸
@@ -174,39 +232,24 @@ def conv2dGradient(outGradent, input, kernel, stride=1, padding=0):
     kernel_height, kernel_width = kernel.shape
     outGradent_height, outGradent_width = outGradent.shape
 
-    if padding > kernel_height // 2 or padding > kernel_width // 2:
+    pad_h, pad_w = _ensure_tuple(padding)
+    if pad_h > kernel_height // 2 or pad_w > kernel_width // 2:
         raise ValueError("Padding cannot be greater than half of the kernel size.")
 
-    input_gradient = np.zeros_like(input)
-    kernel_gradient = np.zeros_like(kernel)
+    input_padded = _pad_input(input, (pad_h, pad_w))
 
-    # 对输入进行padding
-    if padding > 0:
-        input_padded = np.pad(input, ((padding, padding), (padding, padding)), mode='constant')
-    else:
-        input_padded = input
-    
-    # 对输出梯度进行上采样以匹配stride
-    if stride > 1:
-        outGradent_upsampled = upsample(outGradent, stride)
-    else:
-        outGradent_upsampled = outGradent
-    
-    # 卷积核梯度 = 输入_padded 与 输出梯度_upsampled 的互相关
-    # 现有的 convolution2d 实现即为互相关操作 (sum(input_region * kernel))
-    # 尺寸验证: Output_H = Input_Padded_H - Grad_Up_H + 1 = Kernel_H
-    kernel_gradient = convolution2d(input_padded, outGradent_upsampled, stride=stride, padding=0)
+    # 计算卷积核梯度：将输入patch展开成列矩阵，再与输出梯度做矩阵乘法。
+    cols = _im2col(input_padded, kernel_height, kernel_width, stride)
+    kernel_gradient = cols.T.dot(outGradent.reshape(-1)).reshape(kernel_height, kernel_width)
 
     bias_gradient = np.sum(outGradent)
 
-    # 计算输入梯度（保持原有逻辑）
-    outGradent_upsample = upsample(outGradent, stride)
-    pad_h = kernel_height - 1 - padding
-    pad_w = kernel_width - 1 - padding
-    OutGradent_up_paded = np.pad(outGradent_upsample, ((pad_h, pad_h), (pad_w, pad_w)), mode='constant')
-
-    kernel_flipped = np.flipud(np.fliplr(kernel)) # 卷积核整体旋转 180，左右，上下翻转
-    input_gradient = convolution2d(OutGradent_up_paded, kernel_flipped, stride=1, padding=0)
+    # 计算输入梯度：对输出梯度进行上采样（如果stride>1），再与翻转卷积核做全卷积
+    outGradent_upsampled = _upsample(outGradent, stride)
+    pad_h2 = kernel_height - 1 - pad_h
+    pad_w2 = kernel_width - 1 - pad_w
+    kernel_flipped = np.flip(kernel)
+    input_gradient = convolution2d(outGradent_upsampled, kernel_flipped, padding=(pad_h2, pad_w2), stride=1)
 
     return input_gradient, kernel_gradient, bias_gradient
 
