@@ -403,6 +403,12 @@ def train_cnn(loader, params, learning_rate=0.001, epochs=10, use_Adam=False, be
                 v_db5 = beta1 * v_db5 + (1 - beta1) * grads['db5']
                 v_dW4 = beta1 * v_dW4 + (1 - beta1) * grads['dW4']
                 v_db4 = beta1 * v_db4 + (1 - beta1) * grads['db4']
+                v_dW3 = beta1 * v_dW3 + (1 - beta1) * grads['dW3']
+                v_db3 = beta1 * v_db3 + (1 - beta1) * grads['db3']
+                v_dW2 = beta1 * v_dW2 + (1 - beta1) * grads['dW2']
+                v_db2 = beta1 * v_db2 + (1 - beta1) * grads['db2']
+                v_dW1 = beta1 * v_dW1 + (1 - beta1) * grads['dW1']
+                v_db1 = beta1 * v_db1 + (1 - beta1) * grads['db1']
 
                 # 更新二阶矩
                 s_dW6 = beta2 * s_dW6 + (1 - beta2) * (grads['dW6'] ** 2)
@@ -411,6 +417,12 @@ def train_cnn(loader, params, learning_rate=0.001, epochs=10, use_Adam=False, be
                 s_db5 = beta2 * s_db5 + (1 - beta2) * (grads['db5'] ** 2)
                 s_dW4 = beta2 * s_dW4 + (1 - beta2) * (grads['dW4'] ** 2)
                 s_db4 = beta2 * s_db4 + (1 - beta2) * (grads['db4'] ** 2)
+                s_dW3 = beta2 * s_dW3 + (1 - beta2) * (grads['dW3'] ** 2)
+                s_db3 = beta2 * s_db3 + (1 - beta2) * (grads['db3'] ** 2)
+                s_dW2 = beta2 * s_dW2 + (1 - beta2) * (grads['dW2'] ** 2)
+                s_db2 = beta2 * s_db2 + (1 - beta2) * (grads['db2'] ** 2)
+                s_dW1 = beta2 * s_dW1 + (1 - beta2) * (grads['dW1'] ** 2)
+                s_db1 = beta2 * s_db1 + (1 - beta2) * (grads['db1'] ** 2)
 
                 # 偏差修正
                 v_dW6_corr = v_dW6 / (1 - beta1 ** t)
@@ -535,7 +547,7 @@ def main():
     # 训练模型
     print("\n开始训练CNN模型...")
     loss_history, train_acc_history, test_acc_history, trained_params = \
-        train_cnn(loader, params, learning_rate=0.01, epochs=100, use_Adam=True)
+        train_cnn(loader, params, learning_rate=0.001, epochs=100, use_Adam=True)
 
     # 可视化训练过程
     plt.figure(figsize=(12, 5))
