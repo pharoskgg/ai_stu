@@ -180,21 +180,33 @@ def conv2dGradient(outGradent, input, kernel, stride=1, padding=0):
     input_gradient = np.zeros_like(input)
     kernel_gradient = np.zeros_like(kernel)
 
-    input_pad = np.pad(input, ((padding, padding), (padding, padding)), mode='constant')
-
-    kernel_gradient = convolution2d(outGradent, kernel, stride=1, padding=0)
-
+    # 对输入进行padding
+    if padding > 0:
+        input_padded = np.pad(input, ((padding, padding), (padding, padding)), mode='constant')
+    else:
+        input_padded = input
+    
+    # 对输出梯度进行上采样以匹配stride
+    if stride > 1:
+        outGradent_upsampled = upsample(outGradent, stride)
+    else:
+        outGradent_upsampled = outGradent
+    
+    # 卷积核梯度 = 输入_padded 与 输出梯度_upsampled 的互相关
+    # 现有的 convolution2d 实现即为互相关操作 (sum(input_region * kernel))
+    # 尺寸验证: Output_H = Input_Padded_H - Grad_Up_H + 1 = Kernel_H
+    kernel_gradient = convolution2d(input_padded, outGradent_upsampled, stride=stride, padding=0)
 
     bias_gradient = np.sum(outGradent)
 
+    # 计算输入梯度（保持原有逻辑）
     outGradent_upsample = upsample(outGradent, stride)
     pad_h = kernel_height - 1 - padding
     pad_w = kernel_width - 1 - padding
     OutGradent_up_paded = np.pad(outGradent_upsample, ((pad_h, pad_h), (pad_w, pad_w)), mode='constant')
 
-    kernel = np.flipud(np.fliplr(kernel)) # 卷积核整体旋转 180，左右，上下翻转
-    input_gradient = convolution2d(OutGradent_up_paded, kernel, stride=1, padding=0)
-
+    kernel_flipped = np.flipud(np.fliplr(kernel)) # 卷积核整体旋转 180，左右，上下翻转
+    input_gradient = convolution2d(OutGradent_up_paded, kernel_flipped, stride=1, padding=0)
 
     return input_gradient, kernel_gradient, bias_gradient
 
