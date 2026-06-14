@@ -15,6 +15,7 @@ spec.loader.exec_module(cnn_basic_component)
 
 # 从模块中获取所需的函数
 convolution2d = cnn_basic_component.convolution2d
+convolution2d_batch = cnn_basic_component.convolution2d_batch
 conv2dGradient = cnn_basic_component.conv2dGradient
 
 import warnings
@@ -73,53 +74,40 @@ def simple_cnn_forward(X_batch, params):
     batch_size = X_batch.shape[0]
     
     # 第1层卷积: input_size -> output_size (使用3x3卷积核，stride=1, padding=0)
-    W1 = params['W1']  # (8, 3, 3) - 8个3x3卷积核
-    b1 = params['b1']  # (8,)
-    
-    # 动态计算第1层输出尺寸
-    input_h, input_w = X_batch.shape[1:]  # (height, width)
-    kernel_h, kernel_w = W1.shape[1:]     # (3, 3)
-    output_h = (input_h - kernel_h) // 1 + 1  # stride=1
-    output_w = (input_w - kernel_w) // 1 + 1
-    
-    conv1_outputs = []
-    for i in range(batch_size):
-        conv1_sample = []
-        for k in range(W1.shape[0]):  # 对每个卷积核
-            conv_result = convolution2d(X_batch[i], W1[k], padding=0, stride=1) + b1[k]
-            conv1_sample.append(conv_result)
-        conv1_outputs.append(np.array(conv1_sample))  # (8, output_h, output_w)
-    
-    conv1_outputs = np.array(conv1_outputs)  # (batch_size, 8, output_h, output_w)
+    W1 = params['W1']  # (2, 3, 3) - 2个3x3卷积核
+    b1 = params['b1']  # (2,)
+
+    conv1_outputs = convolution2d_batch(X_batch, W1, padding=0, stride=1)  # (batch_size, 2, output_h, output_w)
+    conv1_outputs = conv1_outputs + b1.reshape(1, -1, 1, 1)
     a1 = relu(conv1_outputs)
-    
-    # 拉平: (batch_size, 8, output_h, output_w) -> (batch_size, flattened_size)
+
+    # 拉平: (batch_size, 2, output_h, output_w) -> (batch_size, flattened_size)
     flattened = a1.reshape(batch_size, -1)  # (batch_size, flattened_size)
-    
+
     # 隐藏层全连接: flattened_size -> hidden_size
     W2 = params['W2']  # (flattened_size, hidden_size)
     b2 = params['b2']  # (hidden_size, 1)
     z2 = np.dot(flattened, W2) + b2.T  # (batch_size, hidden_size)
-    a2 = relu(z2.T)  # (hidden_size, batch_size)
-    
+    a2 = relu(z2)  # (batch_size, hidden_size)
+
     # 输出层全连接: hidden_size -> 10
     W3 = params['W3']  # (hidden_size, 10)
     b3 = params['b3']  # (10, 1)
-    z3 = np.dot(a2.T, W3) + b3.T  # (batch_size, 10)
+    z3 = np.dot(a2, W3) + b3.T  # (batch_size, 10)
     a3 = softmax(z3.T)  # (10, batch_size)
-    
+
     # 缓存中间结果用于反向传播
     caches = {
         'X_batch': X_batch,
         'conv1_outputs': conv1_outputs,
         'a1': a1,
         'flattened': flattened,
-        'z2': z2.T,
+        'z2': z2,
         'a2': a2,
-        'z3': z3.T,
+        'z3': z3,
         'a3': a3
     }
-    
+
     return caches, a3
 
 # ==================== 3. 简化CNN反向传播 ====================
@@ -137,52 +125,47 @@ def simple_cnn_backward(caches, Y, params):
         grads: 各参数的梯度
     """
     batch_size = caches['X_batch'].shape[0]
-    n_classes = Y.shape[0]
-    
+
     # 输出层梯度 (softmax + cross entropy)
     dz3 = caches['a3'] - Y  # (10, batch_size)
-    
+    dz3_T = dz3.T  # (batch_size, 10)
+
     # 输出全连接层梯度
-    da2 = np.dot(params['W3'], dz3)  # (hidden_size, batch_size)
-    dW3 = np.dot(caches['a2'], dz3.T) / batch_size  # (hidden_size, 10)
+    dW3 = np.dot(caches['a2'].T, dz3_T) / batch_size  # (hidden_size, 10)
     db3 = np.sum(dz3, axis=1, keepdims=True) / batch_size  # (10, 1)
-    
-    # ReLU梯度
-    dz2 = da2 * relu_derivative(caches['a2'])  # (hidden_size, batch_size)
-    
+
+    # 将输出梯度反传到隐藏层
+    da2 = np.dot(dz3_T, params['W3'].T)  # (batch_size, hidden_size)
+    dz2 = da2 * relu_derivative(caches['z2'])  # (batch_size, hidden_size)
+
     # 隐藏全连接层梯度
-    dflattened = np.dot(params['W2'], dz2).T  # (batch_size, flattened_size)
-    dW2 = np.dot(caches['flattened'].T, dz2.T) / batch_size  # (flattened_size, hidden_size)
-    db2 = np.sum(dz2, axis=1, keepdims=True) / batch_size  # (hidden_size, 1)
-    
+    dW2 = np.dot(caches['flattened'].T, dz2) / batch_size  # (flattened_size, hidden_size)
+    db2 = np.sum(dz2, axis=0, keepdims=True).T / batch_size  # (hidden_size, 1)
+    dflattened = np.dot(dz2, params['W2'].T)  # (batch_size, flattened_size)
+
     # 获取第1层卷积的输出通道数和空间尺寸
-    num_output_channels_1 = params['W1'].shape[0]  # 8
-    num_input_channels_1 = 1  # 单通道输入（灰度图）
-    
-    # 从缓存中获取第1层卷积输出的空间尺寸
-    _, _, height_1, width_1 = caches['a1'].shape  # (batch_size, 8, height_1, width_1)
-    
+    num_output_channels_1 = params['W1'].shape[0]
+    _, _, height_1, width_1 = caches['a1'].shape  # (batch_size, num_channels, height_1, width_1)
+
     # 重塑回卷积层输出形状
     da1 = dflattened.reshape(batch_size, num_output_channels_1, height_1, width_1)
-    
+
     # 第1层卷积梯度 - 使用修复后的conv2dGradient组件
     dW1 = np.zeros_like(params['W1'])
     db1 = np.zeros_like(params['b1'])
-    
+
     for i in range(batch_size):
-        for k in range(num_output_channels_1):  # 输出通道
-            # 输入是单通道灰度图
-            input_grad, kernel_grad, bias_grad = conv2dGradient(
-                da1[i, k],           # 输出梯度 (height_1, width_1)
-                caches['X_batch'][i],  # 输入 (input_h, input_w)
-                params['W1'][k],     # 卷积核 (3, 3)
-                stride=1,            # stride=1
+        for k in range(num_output_channels_1):
+            _, kernel_grad, bias_grad = conv2dGradient(
+                da1[i, k],
+                caches['X_batch'][i],
+                params['W1'][k],
+                stride=1,
                 padding=0
             )
             dW1[k] += kernel_grad
             db1[k] += bias_grad
-    
-    # 平均梯度
+
     dW1 /= batch_size
     db1 /= batch_size
 
@@ -194,7 +177,7 @@ def simple_cnn_backward(caches, Y, params):
         'dW1': dW1,
         'db1': db1
     }
-    
+
     return grads
 
 # ==================== 4. 参数初始化 ====================
@@ -351,7 +334,7 @@ def train_simple_cnn(loader, params, learning_rate=0.001, epochs=10, use_Adam=Fa
                 params['W3'] = params['W3'] - learning_rate * grads['dW3']
                 params['b3'] = params['b3'] - learning_rate * grads['db3']
 
-            if batch_idx % 1 == 0:
+            if batch_idx % 10 == 0 or batch_idx == total_batches - 1:
                 print(f"Epoch {epoch + 1}/{epochs} - Batch {batch_idx + 1}/{total_batches} - Loss: {loss:.4f}")
         
         # 记录平均损失
@@ -404,12 +387,12 @@ def main():
 
     # 初始化网络参数
     print("\n初始化简化CNN网络参数...")
-    params = initialize_simple_parameters(hidden_size=64)
+    params = initialize_simple_parameters(hidden_size=256)
     
     # 训练模型
     print("\n开始训练简化CNN模型...")
     loss_history, train_acc_history, test_acc_history, trained_params = \
-        train_simple_cnn(loader, params, learning_rate=0.001, epochs=5, use_Adam=True)
+        train_simple_cnn(loader, params, learning_rate=0.001, epochs=200, use_Adam=True)
 
     # 可视化训练过程
     plt.figure(figsize=(12, 5))
