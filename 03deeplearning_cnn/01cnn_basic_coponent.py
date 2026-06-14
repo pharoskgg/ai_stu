@@ -11,7 +11,15 @@ def _pad_input(input, padding):
     pad_h, pad_w = _ensure_tuple(padding)
     if pad_h == 0 and pad_w == 0:
         return input
-    return np.pad(input, ((pad_h, pad_h), (pad_w, pad_w)), mode='constant')
+
+    if input.ndim == 2:
+        return np.pad(input, ((pad_h, pad_h), (pad_w, pad_w)), mode='constant')
+    elif input.ndim == 3:
+        return np.pad(input, ((0, 0), (pad_h, pad_h), (pad_w, pad_w)), mode='constant')
+    elif input.ndim == 4:
+        return np.pad(input, ((0, 0), (0, 0), (pad_h, pad_h), (pad_w, pad_w)), mode='constant')
+    else:
+        raise ValueError(f"Unsupported input ndim for padding: {input.ndim}")
 
 
 def _im2col(input_padded, kernel_height, kernel_width, stride=1):
@@ -31,6 +39,21 @@ def _im2col(input_padded, kernel_height, kernel_width, stride=1):
     )
     cols = np.lib.stride_tricks.as_strided(input_padded, shape=shape, strides=strides)
     return cols.reshape(output_height * output_width, kernel_height * kernel_width)
+
+
+def _im2col_multi_channel(input_padded, kernel_height, kernel_width, stride=1):
+    channels, input_height, input_width = input_padded.shape
+    output_height = (input_height - kernel_height) // stride + 1
+    output_width = (input_width - kernel_width) // stride + 1
+
+    if output_height <= 0 or output_width <= 0:
+        return np.zeros((0, channels * kernel_height * kernel_width), dtype=input_padded.dtype)
+
+    cols = np.zeros((output_height * output_width, channels * kernel_height * kernel_width), dtype=input_padded.dtype)
+    for c in range(channels):
+        channel_cols = _im2col(input_padded[c], kernel_height, kernel_width, stride)
+        cols[:, c * kernel_height * kernel_width:(c + 1) * kernel_height * kernel_width] = channel_cols
+    return cols
 
 
 def convolution2d(input, kernel, padding=0, stride=1):
@@ -68,6 +91,28 @@ def convolution2d_multi(input, kernels, padding=0, stride=1):
     return output.reshape(num_kernels, output_height, output_width)
 
 
+def convolution2d_multi_channel(input, kernels, padding=0, stride=1):
+    """
+    对单张多通道输入图像应用多个卷积核，返回多个输出通道。
+
+    input: (in_channels, H, W)
+    kernels: (out_channels, in_channels, KH, KW)
+    """
+    out_channels, in_channels, kernel_height, kernel_width = kernels.shape
+    input_padded = _pad_input(input, padding)
+
+    output_height = (input_padded.shape[1] - kernel_height) // stride + 1
+    output_width = (input_padded.shape[2] - kernel_width) // stride + 1
+
+    if output_height <= 0 or output_width <= 0:
+        return np.zeros((out_channels, 0, 0), dtype=input.dtype)
+
+    cols = _im2col_multi_channel(input_padded, kernel_height, kernel_width, stride)
+    kernel_matrix = kernels.reshape(out_channels, -1)
+    output = cols.dot(kernel_matrix.T)
+    return output.reshape(output_height, output_width, out_channels).transpose(2, 0, 1)
+
+
 def convolution2d_batch(inputs, kernels, padding=0, stride=1):
     """
     对一个批次的单通道图像应用多个卷积核。
@@ -79,14 +124,37 @@ def convolution2d_batch(inputs, kernels, padding=0, stride=1):
     ], axis=0)
 
 
+def convolution2d_multi_channel_batch(inputs, kernels, padding=0, stride=1):
+    """
+    对一个批次的多通道图像应用多个卷积核。
+
+    inputs: (batch, in_channels, H, W)
+    kernels: (out_channels, in_channels, KH, KW)
+    """
+    batch_size = inputs.shape[0]
+    return np.stack([
+        convolution2d_multi_channel(inputs[i], kernels, padding=padding, stride=stride)
+        for i in range(batch_size)
+    ], axis=0)
+
+
 def _upsample(outGradient, stride):
     if stride <= 1:
         return outGradient
 
-    out_height, out_width = outGradient.shape
-    upsampled = np.zeros((out_height * stride - (stride - 1), out_width * stride - (stride - 1)), dtype=outGradient.dtype)
-    upsampled[::stride, ::stride] = outGradient
-    return upsampled
+    if outGradient.ndim == 2:
+        out_height, out_width = outGradient.shape
+        upsampled = np.zeros((out_height * stride - (stride - 1), out_width * stride - (stride - 1)), dtype=outGradient.dtype)
+        upsampled[::stride, ::stride] = outGradient
+        return upsampled
+
+    if outGradient.ndim == 3:
+        channels, out_height, out_width = outGradient.shape
+        upsampled = np.zeros((channels, out_height * stride - (stride - 1), out_width * stride - (stride - 1)), dtype=outGradient.dtype)
+        upsampled[:, ::stride, ::stride] = outGradient
+        return upsampled
+
+    raise ValueError(f"Unsupported gradient ndim for upsampling: {outGradient.ndim}")
 
 
 def convolution3d(input, kernel, padding=0, stride=1):
@@ -252,6 +320,56 @@ def conv2dGradient(outGradent, input, kernel, stride=1, padding=0):
     input_gradient = convolution2d(outGradent_upsampled, kernel_flipped, padding=(pad_h2, pad_w2), stride=1)
 
     return input_gradient, kernel_gradient, bias_gradient
+
+
+def conv2dGradient_batch(outGradent, input, kernels, stride=1, padding=0):
+    """
+    批次级别的卷积梯度计算。
+
+    outGradent: (batch, out_channels, OH, OW)
+    input: (batch, in_channels, H, W)
+    kernels: (out_channels, in_channels, KH, KW)
+    返回:
+      input_gradient: (batch, in_channels, H, W)
+      kernel_gradient: (out_channels, in_channels, KH, KW)
+      bias_gradient: (out_channels,)
+    """
+    batch_size, out_channels, out_h, out_w = outGradent.shape
+    _, in_channels, input_h, input_w = input.shape
+    _, _, kernel_height, kernel_width = kernels.shape
+
+    pad_h, pad_w = _ensure_tuple(padding)
+    if pad_h > kernel_height // 2 or pad_w > kernel_width // 2:
+        raise ValueError("Padding cannot be greater than half of the kernel size.")
+
+    kernel_gradient = np.zeros_like(kernels)
+    input_gradient = np.zeros_like(input)
+    bias_gradient = np.zeros((out_channels,), dtype=outGradent.dtype)
+
+    flipped_kernels = np.flip(kernels, axis=(2, 3)).transpose(1, 0, 2, 3)
+    pad_h2 = kernel_height - 1 - pad_h
+    pad_w2 = kernel_width - 1 - pad_w
+
+    for i in range(batch_size):
+        input_padded = _pad_input(input[i], (pad_h, pad_w))
+        cols = _im2col_multi_channel(input_padded, kernel_height, kernel_width, stride)
+        out_flat = outGradent[i].reshape(out_h * out_w, out_channels)
+        kernel_gradient += out_flat.T.dot(cols).reshape(out_channels, in_channels, kernel_height, kernel_width)
+        bias_gradient += np.sum(outGradent[i], axis=(1, 2))
+
+        outGradent_upsampled = _upsample(outGradent[i], stride)
+        grad_input = convolution2d_multi_channel(outGradent_upsampled, flipped_kernels, padding=(pad_h2, pad_w2), stride=1)
+        if grad_input.shape[1:] != input[i].shape[1:]:
+            padded = np.zeros_like(input[i])
+            padded[:, :grad_input.shape[1], :grad_input.shape[2]] = grad_input[:input[i].shape[0], :padded.shape[1], :padded.shape[2]]
+            grad_input = padded
+        input_gradient[i] = grad_input
+
+    kernel_gradient /= batch_size
+    bias_gradient /= batch_size
+
+    return input_gradient, kernel_gradient, bias_gradient
+
 
 def gradient_pooling_max(input, outGradient, pool_size=2, stride=2):
     input_height, input_width = input.shape
