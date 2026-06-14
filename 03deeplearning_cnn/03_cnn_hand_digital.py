@@ -179,10 +179,38 @@ def cnn_backward(caches, Y, params):
     da4 = dflattened.reshape(batch_size, num_output_channels_4, height_4, width_4)
 
     # 第4层卷积梯度 - 批次级别矩阵化计算
-    _, dW4, db4 = conv2dGradient_batch(
+    dx3, dW4, db4 = conv2dGradient_batch(
         da4,
         caches['a3'],
         params['W4'],
+        stride=2,
+        padding=0
+    )
+
+    # 第3层卷积梯度
+    dx2, dW3, db3 = conv2dGradient_batch(
+        dx3,
+        caches['a2'],
+        params['W3'],
+        stride=2,
+        padding=0
+    )
+
+    # 第2层卷积梯度
+    dx1, dW2, db2 = conv2dGradient_batch(
+        dx2,
+        caches['a1'],
+        params['W2'],
+        stride=2,
+        padding=0
+    )
+
+    # 第1层卷积梯度 - 注意 params['W1'] 存储为 (num_kernels, kH, kW)，需要 reshape
+    W1_reshaped = params['W1'].reshape(params['W1'].shape[0], 1, params['W1'].shape[1], params['W1'].shape[2])
+    _, dW1, db1 = conv2dGradient_batch(
+        dx1,
+        caches['X_batch'],
+        W1_reshaped,
         stride=2,
         padding=0
     )
@@ -193,7 +221,13 @@ def cnn_backward(caches, Y, params):
         'dW5': dW5,
         'db5': db5,
         'dW4': dW4,
-        'db4': db4
+        'db4': db4,
+        'dW3': dW3,
+        'db3': db3,
+        'dW2': dW2,
+        'db2': db2,
+        'dW1': dW1,
+        'db1': db1
     }
 
     return grads
@@ -276,8 +310,13 @@ def accuracy(Y_pre, Y_true):
 
 # ==================== 6. 训练函数 ====================
 
-def train_cnn(loader, params, learning_rate=0.001, epochs=10):
-    """训练CNN模型（无池化层）"""
+def train_cnn(loader, params, learning_rate=0.001, epochs=10, use_Adam=False, beta1=0.9, beta2=0.999, epsilon=1e-8):
+    """训练CNN模型（无池化层）
+
+    参数:
+        use_Adam: 是否使用 Adam 优化器
+        beta1, beta2, epsilon: Adam 超参数
+    """
     loss_history = []
     train_acc_history = []
     test_acc_history = []
@@ -285,6 +324,49 @@ def train_cnn(loader, params, learning_rate=0.001, epochs=10):
     # 获取测试集数据
     X_test_full, y_test_full = loader.get_test_data(one_hot=False)
     X_test_reshaped = X_test_full.T.reshape(-1, 100, 100)
+    
+    # 如果使用 Adam，初始化一阶、二阶矩估计
+    if use_Adam:
+        # conv layer 1 (params['W1'] stored as (out, KH, KW), gradients are (out, in, KH, KW))
+        v_dW1 = np.zeros((params['W1'].shape[0], 1, params['W1'].shape[1], params['W1'].shape[2]))
+        v_db1 = np.zeros_like(params['b1'])
+        s_dW1 = np.zeros((params['W1'].shape[0], 1, params['W1'].shape[1], params['W1'].shape[2]))
+        s_db1 = np.zeros_like(params['b1'])
+
+        # conv layer 2
+        v_dW2 = np.zeros_like(params['W2'])
+        v_db2 = np.zeros_like(params['b2'])
+        s_dW2 = np.zeros_like(params['W2'])
+        s_db2 = np.zeros_like(params['b2'])
+
+        # conv layer 3
+        v_dW3 = np.zeros_like(params['W3'])
+        v_db3 = np.zeros_like(params['b3'])
+        s_dW3 = np.zeros_like(params['W3'])
+        s_db3 = np.zeros_like(params['b3'])
+
+        v_dW6 = np.zeros_like(params['W6'])
+        v_db6 = np.zeros_like(params['b6'])
+        v_dW5 = np.zeros_like(params['W5'])
+        v_db5 = np.zeros_like(params['b5'])
+        v_dW4 = np.zeros_like(params['W4'])
+        v_db4 = np.zeros_like(params['b4'])
+
+        s_dW6 = np.zeros_like(params['W6'])
+        s_db6 = np.zeros_like(params['b6'])
+        s_dW5 = np.zeros_like(params['W5'])
+        s_db5 = np.zeros_like(params['b5'])
+        s_dW4 = np.zeros_like(params['W4'])
+        s_db4 = np.zeros_like(params['b4'])
+        
+        # conv layer 2-3 second moments already set above; W1 second moments created earlier
+        # (no-op here)
+        s_dW2 = np.zeros_like(params['W2'])
+        s_db2 = np.zeros_like(params['b2'])
+        s_dW3 = np.zeros_like(params['W3'])
+        s_db3 = np.zeros_like(params['b3'])
+
+    t = 0  # Adam 时间步计数
     
     for epoch in range(epochs):
         epoch_loss = 0
@@ -311,12 +393,89 @@ def train_cnn(loader, params, learning_rate=0.001, epochs=10):
             grads = cnn_backward(caches, Y_batch, params)
             
             # 更新参数（只更新全连接层和最后一层卷积层作为示例）
-            params['W6'] -= learning_rate * grads['dW6']
-            params['b6'] -= learning_rate * grads['db6']
-            params['W5'] -= learning_rate * grads['dW5']
-            params['b5'] -= learning_rate * grads['db5']
-            params['W4'] -= learning_rate * grads['dW4']
-            params['b4'] -= learning_rate * grads['db4']
+            if use_Adam:
+                t += 1
+
+                # 更新一阶矩
+                v_dW6 = beta1 * v_dW6 + (1 - beta1) * grads['dW6']
+                v_db6 = beta1 * v_db6 + (1 - beta1) * grads['db6']
+                v_dW5 = beta1 * v_dW5 + (1 - beta1) * grads['dW5']
+                v_db5 = beta1 * v_db5 + (1 - beta1) * grads['db5']
+                v_dW4 = beta1 * v_dW4 + (1 - beta1) * grads['dW4']
+                v_db4 = beta1 * v_db4 + (1 - beta1) * grads['db4']
+
+                # 更新二阶矩
+                s_dW6 = beta2 * s_dW6 + (1 - beta2) * (grads['dW6'] ** 2)
+                s_db6 = beta2 * s_db6 + (1 - beta2) * (grads['db6'] ** 2)
+                s_dW5 = beta2 * s_dW5 + (1 - beta2) * (grads['dW5'] ** 2)
+                s_db5 = beta2 * s_db5 + (1 - beta2) * (grads['db5'] ** 2)
+                s_dW4 = beta2 * s_dW4 + (1 - beta2) * (grads['dW4'] ** 2)
+                s_db4 = beta2 * s_db4 + (1 - beta2) * (grads['db4'] ** 2)
+
+                # 偏差修正
+                v_dW6_corr = v_dW6 / (1 - beta1 ** t)
+                v_db6_corr = v_db6 / (1 - beta1 ** t)
+                v_dW5_corr = v_dW5 / (1 - beta1 ** t)
+                v_db5_corr = v_db5 / (1 - beta1 ** t)
+                v_dW4_corr = v_dW4 / (1 - beta1 ** t)
+                v_db4_corr = v_db4 / (1 - beta1 ** t)
+
+                v_dW3_corr = v_dW3 / (1 - beta1 ** t)
+                v_db3_corr = v_db3 / (1 - beta1 ** t)
+                v_dW2_corr = v_dW2 / (1 - beta1 ** t)
+                v_db2_corr = v_db2 / (1 - beta1 ** t)
+                v_dW1_corr = v_dW1 / (1 - beta1 ** t)
+                v_db1_corr = v_db1 / (1 - beta1 ** t)
+
+                s_dW6_corr = s_dW6 / (1 - beta2 ** t)
+                s_db6_corr = s_db6 / (1 - beta2 ** t)
+                s_dW5_corr = s_dW5 / (1 - beta2 ** t)
+                s_db5_corr = s_db5 / (1 - beta2 ** t)
+                s_dW4_corr = s_dW4 / (1 - beta2 ** t)
+                s_db4_corr = s_db4 / (1 - beta2 ** t)
+
+                s_dW3_corr = s_dW3 / (1 - beta2 ** t)
+                s_db3_corr = s_db3 / (1 - beta2 ** t)
+                s_dW2_corr = s_dW2 / (1 - beta2 ** t)
+                s_db2_corr = s_db2 / (1 - beta2 ** t)
+                s_dW1_corr = s_dW1 / (1 - beta2 ** t)
+                s_db1_corr = s_db1 / (1 - beta2 ** t)
+
+                # 参数更新
+                params['W6'] = params['W6'] - (learning_rate / (np.sqrt(s_dW6_corr) + epsilon)) * v_dW6_corr
+                params['b6'] = params['b6'] - (learning_rate / (np.sqrt(s_db6_corr) + epsilon)) * v_db6_corr
+                params['W5'] = params['W5'] - (learning_rate / (np.sqrt(s_dW5_corr) + epsilon)) * v_dW5_corr
+                params['b5'] = params['b5'] - (learning_rate / (np.sqrt(s_db5_corr) + epsilon)) * v_db5_corr
+                params['W4'] = params['W4'] - (learning_rate / (np.sqrt(s_dW4_corr) + epsilon)) * v_dW4_corr
+                params['b4'] = params['b4'] - (learning_rate / (np.sqrt(s_db4_corr) + epsilon)) * v_db4_corr
+                params['W3'] = params['W3'] - (learning_rate / (np.sqrt(s_dW3_corr) + epsilon)) * v_dW3_corr
+                params['b3'] = params['b3'] - (learning_rate / (np.sqrt(s_db3_corr) + epsilon)) * v_db3_corr
+                params['W2'] = params['W2'] - (learning_rate / (np.sqrt(s_dW2_corr) + epsilon)) * v_dW2_corr
+                params['b2'] = params['b2'] - (learning_rate / (np.sqrt(s_db2_corr) + epsilon)) * v_db2_corr
+
+                # W1 存储为 (num_kernels, kH, kW)，但 v_dW1_corr 是 (out, in, KH, KW)，需要 squeeze 中间的 in 维
+                v_dW1_corr_squeezed = v_dW1_corr[:, 0, :, :]
+                s_dW1_corr_squeezed = s_dW1_corr[:, 0, :, :]
+                params['W1'] = params['W1'] - (learning_rate / (np.sqrt(s_dW1_corr_squeezed) + epsilon)) * v_dW1_corr_squeezed
+                params['b1'] = params['b1'] - (learning_rate / (np.sqrt(s_db1_corr) + epsilon)) * v_db1_corr
+            else:
+                params['W6'] -= learning_rate * grads['dW6']
+                params['b6'] -= learning_rate * grads['db6']
+                params['W5'] -= learning_rate * grads['dW5']
+                params['b5'] -= learning_rate * grads['db5']
+                params['W4'] -= learning_rate * grads['dW4']
+                params['b4'] -= learning_rate * grads['db4']
+                params['W3'] -= learning_rate * grads['dW3']
+                params['b3'] -= learning_rate * grads['db3']
+                params['W2'] -= learning_rate * grads['dW2']
+                params['b2'] -= learning_rate * grads['db2']
+                # grads['dW1'] 可能为 (out, in, KH, KW)，需要 squeeze 中间的 in 维
+                if grads['dW1'].ndim == 4 and grads['dW1'].shape[1] == 1:
+                    grads_dW1_squeezed = grads['dW1'][:, 0, :, :]
+                else:
+                    grads_dW1_squeezed = grads['dW1']
+                params['W1'] -= learning_rate * grads_dW1_squeezed
+                params['b1'] -= learning_rate * grads['db1']
             
             if batch_idx % 1 == 0:
                 print(f"Epoch {epoch + 1}/{epochs} - Batch {batch_idx + 1}/{total_batches} - Loss: {loss:.4f}")
@@ -376,7 +535,7 @@ def main():
     # 训练模型
     print("\n开始训练CNN模型...")
     loss_history, train_acc_history, test_acc_history, trained_params = \
-        train_cnn(loader, params, learning_rate=0.001, epochs=5)
+        train_cnn(loader, params, learning_rate=0.01, epochs=100, use_Adam=True)
 
     # 可视化训练过程
     plt.figure(figsize=(12, 5))
