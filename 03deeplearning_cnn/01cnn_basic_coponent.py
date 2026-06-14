@@ -182,10 +182,8 @@ def conv2dGradient(outGradent, input, kernel, stride=1, padding=0):
 
     input_pad = np.pad(input, ((padding, padding), (padding, padding)), mode='constant')
 
-    for i in range(kernel_height):
-        for j in range(kernel_width):
-            input_region = input_pad[i*stride:i*stride+kernel_height, j*stride:j*stride+kernel_width]
-            kernel_gradient[i, j] = np.sum(input_region * outGradent)
+    kernel_gradient = convolution2d(outGradent, kernel, stride=1, padding=0)
+
 
     bias_gradient = np.sum(outGradent)
 
@@ -195,14 +193,33 @@ def conv2dGradient(outGradent, input, kernel, stride=1, padding=0):
     OutGradent_up_paded = np.pad(outGradent_upsample, ((pad_h, pad_h), (pad_w, pad_w)), mode='constant')
 
     kernel = np.flipud(np.fliplr(kernel)) # 卷积核整体旋转 180，左右，上下翻转
-    for i in range(input_height):
-        for j in range(input_width):
-            input_region = OutGradent_up_paded[i:i+kernel_height, j:j+kernel_width]
-            input_gradient[i, j] = np.sum(input_region * kernel)
+    input_gradient = convolution2d(OutGradent_up_paded, kernel, stride=1, padding=0)
+
 
     return input_gradient, kernel_gradient, bias_gradient
 
+def gradient_pooling_max(input, outGradient, pool_size=2, stride=2):
+    input_height, input_width = input.shape
+    outGradient_height, outGradient_width = outGradient.shape
 
+    input_gradient = np.zeros_like(input)
+
+    for i in range(outGradient_height):
+        for j in range(outGradient_width):
+            h_start = i * stride
+            w_start = j * stride
+            h_end = min(h_start + pool_size, input_height)
+            w_end = min(w_start + pool_size, input_width)
+
+            input_region = input[h_start:h_end, w_start:w_end]
+            max_value = np.max(input_region)
+
+            for h in range(h_start, h_end):
+                for w in range(w_start, w_end):
+                    if input[h, w] == max_value:
+                        input_gradient[h, w] += outGradient[i, j]
+
+    return input_gradient
 def test_convolution2d():
     input = np.array([
         [10, 10, 10, 0, 0, 0],
