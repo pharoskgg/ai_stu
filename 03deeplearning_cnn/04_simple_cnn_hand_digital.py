@@ -57,15 +57,82 @@ def one_hot_encode(y, num_classes):
     one_hot[y, np.arange(m)] = 1
     return one_hot
 
+# ==================== 1.5 批量正则化 ====================
+
+def batch_norm_forward(X, gamma, beta, epsilon=1e-8):
+    """批量正则化前向传播，支持卷积层和全连接层"""
+    cache = {
+        'is_conv': X.ndim == 4,
+        'epsilon': epsilon,
+        'gamma': gamma,
+        'beta': beta
+    }
+    if X.ndim == 4:
+        batch_size, channels, height, width = X.shape
+        X_flat = X.transpose(1, 0, 2, 3).reshape(channels, -1)
+        mean = np.mean(X_flat, axis=1, keepdims=True)
+        var = np.var(X_flat, axis=1, keepdims=True)
+        X_norm_flat = (X_flat - mean) / np.sqrt(var + epsilon)
+        X_norm = X_norm_flat.reshape(channels, batch_size, height, width).transpose(1, 0, 2, 3)
+        out = gamma.reshape(1, -1, 1, 1) * X_norm + beta.reshape(1, -1, 1, 1)
+        cache.update({'X_norm': X_norm, 'mean': mean, 'var': var, 'X_flat': X_flat})
+    else:
+        X_flat = X.T  # shape (features, batch)
+        mean = np.mean(X_flat, axis=1, keepdims=True)
+        var = np.var(X_flat, axis=1, keepdims=True)
+        X_norm_flat = (X_flat - mean) / np.sqrt(var + epsilon)
+        X_norm = X_norm_flat.T
+        out = gamma.reshape(1, -1) * X_norm + beta.reshape(1, -1)
+        cache.update({'X_norm': X_norm, 'mean': mean, 'var': var, 'X_flat': X_flat})
+    return out, cache
+
+def batch_norm_backward(dout, cache):
+    """批量正则化反向传播"""
+    is_conv = cache['is_conv']
+    epsilon = cache['epsilon']
+    gamma = cache['gamma']
+    beta = cache['beta']
+    X_norm = cache['X_norm']
+    mean = cache['mean']
+    var = cache['var']
+    X_flat = cache['X_flat']
+
+    if is_conv:
+        batch_size, channels, height, width = dout.shape
+        dgamma = np.sum(dout * X_norm, axis=(0, 2, 3))
+        dbeta = np.sum(dout, axis=(0, 2, 3))
+        dX_norm = dout * gamma.reshape(1, -1, 1, 1)
+        dX_norm_flat = dX_norm.transpose(1, 0, 2, 3).reshape(channels, -1)
+        m = dX_norm_flat.shape[1]
+        dvar = np.sum(dX_norm_flat * (X_flat - mean) * -0.5 * (var + epsilon) ** (-1.5), axis=1, keepdims=True)
+        dmean = np.sum(dX_norm_flat * -1.0 / np.sqrt(var + epsilon), axis=1, keepdims=True) + \
+                dvar * np.sum(-2 * (X_flat - mean), axis=1, keepdims=True) / m
+        dX_flat = dX_norm_flat / np.sqrt(var + epsilon) + dvar * 2 * (X_flat - mean) / m + dmean / m
+        dX = dX_flat.reshape(channels, batch_size, height, width).transpose(1, 0, 2, 3)
+    else:
+        batch_size, features = dout.shape
+        dgamma = np.sum(dout * X_norm, axis=0)
+        dbeta = np.sum(dout, axis=0)
+        dX_norm = dout * gamma.reshape(1, -1)
+        dX_flat = dX_norm.T  # (features, batch)
+        m = dX_flat.shape[1]
+        dvar = np.sum(dX_flat * (X_flat - mean) * -0.5 * (var + epsilon) ** (-1.5), axis=1, keepdims=True)
+        dmean = np.sum(dX_flat * -1.0 / np.sqrt(var + epsilon), axis=1, keepdims=True) + \
+                dvar * np.sum(-2 * (X_flat - mean), axis=1, keepdims=True) / m
+        dX_flat = dX_flat / np.sqrt(var + epsilon) + dvar * 2 * (X_flat - mean) / m + dmean / m
+        dX = dX_flat.T
+    return dX, dgamma, dbeta
+
 # ==================== 2. 简化CNN前向传播 ====================
 
-def simple_cnn_forward(X_batch, params):
+def simple_cnn_forward(X_batch, params, use_bn=False):
     """
     简化CNN前向传播（1个卷积层 + 全连接层）
     
     参数:
         X_batch: 输入批次数据 (batch_size, height, width)
         params: 网络参数字典
+        use_bn: 是否使用Batch Normalization
         
     返回:
         caches: 缓存各层的中间结果用于反向传播
@@ -79,6 +146,8 @@ def simple_cnn_forward(X_batch, params):
 
     conv1_outputs = convolution2d_batch(X_batch, W1, padding=0, stride=1)  # (batch_size, 2, output_h, output_w)
     conv1_outputs = conv1_outputs + b1.reshape(1, -1, 1, 1)
+    if use_bn:
+        conv1_outputs, bn1_cache = batch_norm_forward(conv1_outputs, params['gamma1'], params['beta1'])
     a1 = relu(conv1_outputs)
 
     # 拉平: (batch_size, 2, output_h, output_w) -> (batch_size, flattened_size)
@@ -88,6 +157,8 @@ def simple_cnn_forward(X_batch, params):
     W2 = params['W2']  # (flattened_size, hidden_size)
     b2 = params['b2']  # (hidden_size, 1)
     z2 = np.dot(flattened, W2) + b2.T  # (batch_size, hidden_size)
+    if use_bn:
+        z2, bn2_cache = batch_norm_forward(z2, params['gamma2'], params['beta2'])
     a2 = relu(z2)  # (batch_size, hidden_size)
 
     # 输出层全连接: hidden_size -> 10
@@ -105,14 +176,18 @@ def simple_cnn_forward(X_batch, params):
         'z2': z2,
         'a2': a2,
         'z3': z3,
-        'a3': a3
+        'a3': a3,
+        'use_bn': use_bn
     }
+    if use_bn:
+        caches['bn1_cache'] = bn1_cache
+        caches['bn2_cache'] = bn2_cache
 
     return caches, a3
 
 # ==================== 3. 简化CNN反向传播 ====================
 
-def simple_cnn_backward(caches, Y, params):
+def simple_cnn_backward(caches, Y, params, use_bn=False):
     """
     简化CNN反向传播（1个卷积层 + 全连接层）
     
@@ -137,6 +212,8 @@ def simple_cnn_backward(caches, Y, params):
     # 将输出梯度反传到隐藏层
     da2 = np.dot(dz3_T, params['W3'].T)  # (batch_size, hidden_size)
     dz2 = da2 * relu_derivative(caches['z2'])  # (batch_size, hidden_size)
+    if use_bn:
+        dz2, dgamma2, dbeta2 = batch_norm_backward(dz2, caches['bn2_cache'])
 
     # 隐藏全连接层梯度
     dW2 = np.dot(caches['flattened'].T, dz2) / batch_size  # (flattened_size, hidden_size)
@@ -151,6 +228,9 @@ def simple_cnn_backward(caches, Y, params):
     da1 = dflattened.reshape(batch_size, num_output_channels_1, height_1, width_1)
 
     # 第1层卷积梯度 - 使用修复后的conv2dGradient组件
+    if use_bn:
+        da1 = da1 * relu_derivative(caches['a1'])
+        da1, dgamma1, dbeta1 = batch_norm_backward(da1, caches['bn1_cache'])
     dW1 = np.zeros_like(params['W1'])
     db1 = np.zeros_like(params['b1'])
 
@@ -177,6 +257,11 @@ def simple_cnn_backward(caches, Y, params):
         'dW1': dW1,
         'db1': db1
     }
+    if use_bn:
+        grads['dgamma2'] = dgamma2
+        grads['dbeta2'] = dbeta2
+        grads['dgamma1'] = dgamma1
+        grads['dbeta1'] = dbeta1
 
     return grads
 
@@ -193,6 +278,8 @@ def initialize_simple_parameters(input_height=64, input_width=64, hidden_size=64
     # 卷积层参数：2个3x3卷积核
     params['W1'] = np.random.randn(2, 3, 3) * 0.1  # 2个3x3卷积核
     params['b1'] = np.zeros((2,))
+    params['gamma1'] = np.ones((2,))
+    params['beta1'] = np.zeros((2,))
     
     # 动态计算全连接层输入维度
     # 第1层: input_size -> output_size (stride=1, kernel=3)
@@ -203,6 +290,8 @@ def initialize_simple_parameters(input_height=64, input_width=64, hidden_size=64
     # 隐藏层全连接参数
     params['W2'] = np.random.randn(flattened_size, hidden_size) * 0.1
     params['b2'] = np.zeros((hidden_size, 1))
+    params['gamma2'] = np.ones((hidden_size,))
+    params['beta2'] = np.zeros((hidden_size,))
     
     # 输出层全连接参数
     params['W3'] = np.random.randn(hidden_size, 10) * 0.1  # 10 classes
@@ -212,7 +301,7 @@ def initialize_simple_parameters(input_height=64, input_width=64, hidden_size=64
 
 # ==================== 5. 预测函数 ====================
 
-def predict(X, params):
+def predict(X, params, use_bn=False):
     """预测函数"""
     # 重塑输入为(batch_size, height, width)
     if X.ndim == 2:
@@ -221,7 +310,7 @@ def predict(X, params):
     else:
         X_reshaped = X
     
-    _, output = simple_cnn_forward(X_reshaped, params)
+    _, output = simple_cnn_forward(X_reshaped, params, use_bn=use_bn)
     predictions = np.argmax(output, axis=0)
     return predictions
 
@@ -237,7 +326,7 @@ def accuracy(Y_pre, Y_true):
 
 # ==================== 6. 训练函数 ====================
 
-def train_simple_cnn(loader, params, learning_rate=0.001, epochs=10, use_Adam=False, beta1=0.9, beta2=0.999, epsilon=1e-8):
+def train_simple_cnn(loader, params, learning_rate=0.001, epochs=10, use_Adam=False, use_bn=False, beta1=0.9, beta2=0.999, epsilon=1e-8):
     """训练简化CNN模型"""
     loss_history = []
     train_acc_history = []
@@ -276,7 +365,7 @@ def train_simple_cnn(loader, params, learning_rate=0.001, epochs=10, use_Adam=Fa
             Y_batch = one_hot_encode(y_batch, num_classes=10)
             
             # 前向传播
-            caches, output = simple_cnn_forward(X_batch, params)
+            caches, output = simple_cnn_forward(X_batch, params, use_bn=use_bn)
             
             # 计算损失
             loss = cross_entropy_loss(output, Y_batch)
@@ -284,7 +373,7 @@ def train_simple_cnn(loader, params, learning_rate=0.001, epochs=10, use_Adam=Fa
             num_batches += 1
             
             # 反向传播
-            grads = simple_cnn_backward(caches, Y_batch, params)
+            grads = simple_cnn_backward(caches, Y_batch, params, use_bn=use_bn)
             
             if use_Adam:
                 t = t + 1  # Adam时间步增加
@@ -325,6 +414,11 @@ def train_simple_cnn(loader, params, learning_rate=0.001, epochs=10, use_Adam=Fa
                 params['b2'] = params['b2'] - (learning_rate / (np.sqrt(s_db2_corrected) + epsilon)) * v_db2_corrected
                 params['W3'] = params['W3'] - (learning_rate / (np.sqrt(s_dw3_corrected) + epsilon)) * v_dw3_corrected
                 params['b3'] = params['b3'] - (learning_rate / (np.sqrt(s_db3_corrected) + epsilon)) * v_db3_corrected
+                if use_bn:
+                    params['gamma1'] = params['gamma1'] - learning_rate * grads['dgamma1']
+                    params['beta1'] = params['beta1'] - learning_rate * grads['dbeta1']
+                    params['gamma2'] = params['gamma2'] - learning_rate * grads['dgamma2']
+                    params['beta2'] = params['beta2'] - learning_rate * grads['dbeta2']
 
             else:
                 params['W1'] = params['W1'] - learning_rate * grads['dW1']
@@ -333,6 +427,11 @@ def train_simple_cnn(loader, params, learning_rate=0.001, epochs=10, use_Adam=Fa
                 params['b2'] = params['b2'] - learning_rate * grads['db2']
                 params['W3'] = params['W3'] - learning_rate * grads['dW3']
                 params['b3'] = params['b3'] - learning_rate * grads['db3']
+                if use_bn:
+                    params['gamma1'] -= learning_rate * grads['dgamma1']
+                    params['beta1'] -= learning_rate * grads['dbeta1']
+                    params['gamma2'] -= learning_rate * grads['dgamma2']
+                    params['beta2'] -= learning_rate * grads['dbeta2']
 
             if batch_idx % 10 == 0 or batch_idx == total_batches - 1:
                 print(f"Epoch {epoch + 1}/{epochs} - Batch {batch_idx + 1}/{total_batches} - Loss: {loss:.4f}")
@@ -347,12 +446,12 @@ def train_simple_cnn(loader, params, learning_rate=0.001, epochs=10, use_Adam=Fa
         train_indices = np.random.choice(loader.X_train.shape[0], train_sample_size, replace=False)
         X_train_sample = loader.X_train[train_indices].reshape(train_sample_size, 64, 64)
         y_train_sample = loader.y_train[train_indices]
-        train_pred = predict(X_train_sample, params)
+        train_pred = predict(X_train_sample, params, use_bn=use_bn)
         train_acc = accuracy(train_pred, y_train_sample)
         train_acc_history.append(train_acc)
         
         # 测试集评估
-        test_pred = predict(X_test_reshaped, params)
+        test_pred = predict(X_test_reshaped, params, use_bn=use_bn)
         test_acc = accuracy(test_pred, y_test_full)
         test_acc_history.append(test_acc)
         
@@ -392,7 +491,7 @@ def main():
     # 训练模型
     print("\n开始训练简化CNN模型...")
     loss_history, train_acc_history, test_acc_history, trained_params = \
-        train_simple_cnn(loader, params, learning_rate=0.001, epochs=200, use_Adam=True)
+        train_simple_cnn(loader, params, learning_rate=0.01, epochs=200, use_Adam=True, use_bn=True)
 
     # 可视化训练过程
     plt.figure(figsize=(12, 5))
