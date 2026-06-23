@@ -1,10 +1,10 @@
 from abc import ABC, abstractmethod
 import numpy as np
 
-class KSangNet(ABC):
+class KSNet(ABC):
     """
     深度学习层抽象基类
-    所有算子层必须继承该类，实现 forward / backward / update 三个核心方法
+    所有算子层必须继承该类，实现 forward / backward 两个核心方法
     """
     def __init__(self):
         # ========== 前向传播缓存 ==========
@@ -21,6 +21,7 @@ class KSangNet(ABC):
 
         # ========== 标志位 ==========
         self.trainable: bool = True  # 是否参与参数更新
+        self.training: bool = True   # True=训练模式(计算梯度)，False=推理模式
 
     @abstractmethod
     def forward(self, x: np.ndarray) -> np.ndarray:
@@ -42,22 +43,15 @@ class KSangNet(ABC):
         """
         pass
 
-    @abstractmethod
-    def update(self, lr: float) -> None:
-        """
-        梯度下降更新参数
-        :param lr: 学习率 learning rate
-        无参层直接空实现 pass
-        """
-        pass
-
     def zero_grad(self) -> None:
         """清空梯度，每个batch训练前调用，防止梯度累加"""
         if self.trainable:
-            self.w_grad = None
-            self.b_grad = None
+            if self.w_grad is not None:
+                self.w_grad.fill(0.0)
+            if self.b_grad is not None:
+                self.b_grad.fill(0.0)
 
-    def parameters(self) -> list[tuple[np.ndarray, np.ndarray]]:
+    def parameters(self) -> list[tuple[np.ndarray, np.ndarray | None]]:
         """
         获取所有可训练参数与对应梯度，供优化器统一调用
         :return: [(参数, 梯度), (参数, 梯度)]
@@ -69,3 +63,26 @@ class KSangNet(ABC):
             if self.bias is not None:
                 params.append((self.bias, self.b_grad))
         return params
+
+    def train(self) -> None:
+        self.training = True
+
+    def eval(self) -> None:
+        self.training = False
+
+    def save_weights(self, path: str) -> None:
+        """保存权重至npz文件"""
+        save_dict = {}
+        if self.weight is not None:
+            save_dict["weight"] = self.weight
+        if self.bias is not None:
+            save_dict["bias"] = self.bias
+        np.savez(path, **save_dict)
+
+    def load_weights(self, path: str) -> None:
+        """从npz加载权重"""
+        data = np.load(path)
+        if "weight" in data and self.weight is not None:
+            self.weight = data["weight"]
+        if "bias" in data and self.bias is not None:
+            self.bias = data["bias"]

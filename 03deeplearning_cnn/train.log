@@ -1,0 +1,14 @@
+# 02_dnn_hand_digital.py
+    # Adam:True keep_prob=0.8,grayscale = True
+    Epoch 200/200 - Loss: 0.4407 - Train Acc: 0.9310 - Test Acc: 0.7525
+
+    # Adamm:False keep_prob=0.8 grayscale = True
+    Epoch 200/200 - Batch 13 - Loss: 0.8935
+    Epoch 200/200 - Loss: 0.8314 - Train Acc: 0.8365 - Test Acc: 0.6569
+
+    # Adam:False keep_prob=1.0. grayscale = True
+    Epoch 200/200 - Batch 13 - Loss: 0.5509 
+    Epoch 200/200 - Loss: 0.6111 - Train Acc: 0.7971 - Test Acc: 0.6176
+
+    # Adam:False keep_prob=1.0. grayscale = False
+    Epoch 200/200 - Loss: 1.1016 - Train Acc: 0.8528 - Test Acc: 0.6642
