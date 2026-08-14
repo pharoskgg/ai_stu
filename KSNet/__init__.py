@@ -1,8 +1,10 @@
 # ksnet/__init__.py
-from .core import KSangNet, KSLossBase, KSOptimizerBase
-from .layers import KSLinear
-from .optimizers import KSSGDOptimizer
-from .losses import KSBinaryLogisticLoss
+from .core.KSangNet import KSNet as KSangNet
+from .core.KSLossBase import KSLossBase
+from .core.KSOptimizerBase import KSOptimizerBase
+from .layers.KSLinear import KSLinear
+from .optimizers.KSSGDOptimizer import SGDOptimizer as KSSGDOptimizer
+from .losses.KSBinaryLogisticLoss import BinaryLogisticLoss as KSBinaryLogisticLoss
 
 __all__ = [
     "KSangNet", "KSLossBase", "KSOptimizerBase",

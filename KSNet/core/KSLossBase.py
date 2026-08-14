@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 import numpy as np
 
@@ -8,6 +10,8 @@ class KSLossBase(ABC):
         self.pred: np.ndarray | None = None
         self.label: np.ndarray | None = None
         self.batch_size: int | None = None
+        self.loss: np.ndarray | None = None
+        self.dz: np.ndarray | None = None
 
     @abstractmethod
     def forward(self, pred: np.ndarray, label: np.ndarray) -> float:

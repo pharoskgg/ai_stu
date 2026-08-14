@@ -24,20 +24,9 @@ class BinaryLogisticLoss(KSLossBase):
         self.label = label
         self.batch_size = pred.shape[0]
 
-        # 数值稳定 sigmoid，防止exp溢出
-        z = pred
-        mask = z >= 0
-        self.sigmoid_out = np.empty_like(z)
-        self.sigmoid_out[mask] = 1.0 / (1.0 + np.exp(-z[mask]))
-        exp_z = np.exp(z[~mask])
-        self.sigmoid_out[~mask] = exp_z / (1.0 + exp_z)
+        eps = 1e-8
+        loss_per_sample = -(label * np.log(pred + eps) + (1 - label) * np.log(1 - pred + eps))
 
-        # 裁剪防止 log(0)
-        eps = 1e-12
-        sig = np.clip(self.sigmoid_out, eps, 1 - eps)
-
-        # 计算单样本损失
-        loss_per_sample = -(label * np.log(sig) + (1 - label) * np.log(1 - sig))
         avg_loss = float(np.sum(loss_per_sample) / self.batch_size)
         return avg_loss
 
@@ -45,6 +34,9 @@ class BinaryLogisticLoss(KSLossBase):
         """返回 dL/dz，作为最后一层Linear的dout输入"""
         if self.pred is None or self.sigmoid_out is None:
             raise RuntimeError("请先执行 forward 再调用 backward")
-        # 化简梯度公式
-        dz = (self.sigmoid_out - self.label) / self.batch_size
-        return dz
+        eps = 1e-12
+        p = np.clip(self.pred, eps, 1 - eps)
+        # dL/dp = (p - y) / (N * p * (1 - p))
+        dp = (p - self.label) / (self.batch_size * p * (1 - p))
+        self.dz = dp
+        return dp
