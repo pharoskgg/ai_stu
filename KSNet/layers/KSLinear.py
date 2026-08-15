@@ -52,9 +52,9 @@ class KSLinear(KSNet):
             raise ValueError(f"上游梯度形状不匹配，期望{self.output.shape}，实际{dout.shape}")
 
         # 冻结参数时跳过权重梯度计算，节省算力
-        if self.trainable and self.training:
-            self.w_grad = np.dot(self.input.T, dout)
-            self.b_grad = np.sum(dout, axis=0)
+        if self.trainable:
+            self.w_grad += np.dot(self.input.T, dout)
+            self.b_grad += np.sum(dout, axis=0)
 
         # 输入梯度必须计算，传递给上一层
         dx = np.dot(dout, self.weight.T)
