@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 from KSNet.core.KSLossBase import KSLossBase
+from KSNet.layers.KSSigmoid import KSSigmoid
 
 class BinaryLogisticLoss(KSLossBase):
     """
@@ -11,6 +12,7 @@ class BinaryLogisticLoss(KSLossBase):
     """
     def __init__(self):
         super().__init__()
+        self.sigmoid = KSSigmoid()
         self.sigmoid_out: np.ndarray | None = None  # 缓存sigmoid结果
 
     def forward(self, pred: np.ndarray, label: np.ndarray) -> float:
@@ -24,16 +26,12 @@ class BinaryLogisticLoss(KSLossBase):
         self.label = label
         self.batch_size = pred.shape[0]
 
-        # 数值稳定 sigmoid，防止exp溢出
-        z = pred
-        mask = z >= 0
-        self.sigmoid_out = np.empty_like(z)
-        self.sigmoid_out[mask] = 1.0 / (1.0 + np.exp(-z[mask]))
-        exp_z = np.exp(z[~mask])
-        self.sigmoid_out[~mask] = exp_z / (1.0 + exp_z)
+        # 复用数值稳定的 Sigmoid 前向计算，防止 exp 溢出
+        self.sigmoid_out = self.sigmoid.forward(pred)
 
         # 裁剪防止 log(0)
         eps = 1e-12
+        # 把 sigmoid 输出限制在 [eps, 1-eps] 范围内，避免出现精确的 0 或 1
         sig = np.clip(self.sigmoid_out, eps, 1 - eps)
 
         # 计算单样本损失

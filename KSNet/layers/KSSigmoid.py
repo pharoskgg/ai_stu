@@ -2,7 +2,7 @@ from KSNet.core.KSangNet import KSNet
 import numpy as np
 
 class KSSigmoid(KSNet):
-    """无参数 Sigmoid 激活层：y = 1 / (1 + exp(-x))。"""
+    """无参数 Sigmoid 激活层，使用数值稳定的公式计算。"""
     def __init__(self):
         super().__init__()
         self.trainable = False
@@ -14,7 +14,16 @@ class KSSigmoid(KSNet):
         :return: 输出张量，形状 (batch_size, dim)
         """
         self.input = x
-        self.output = 1 / (1 + np.exp(-x))
+
+        # 根据输入正负选择等价公式，避免 np.exp() 的输入过大而溢出：
+        # x >= 0: sigmoid(x) = 1 / (1 + exp(-x))
+        # x <  0: sigmoid(x) = exp(x) / (1 + exp(x))
+        mask = x >= 0
+        self.output = np.empty_like(x, dtype=np.float64)
+        self.output[mask] = 1.0 / (1.0 + np.exp(-x[mask]))
+
+        exp_x = np.exp(x[~mask])
+        self.output[~mask] = exp_x / (1.0 + exp_x)
         return self.output
 
     def backward(self, dout: np.ndarray) -> np.ndarray:
