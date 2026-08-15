@@ -1,0 +1,8 @@
+# VSCode 配置目录
+.vscode/*
+.vscode/settings.json
+
+# Python 缓存文件
+*.pyc
+__pycache__/
+03deeplearning_cnn/data/
