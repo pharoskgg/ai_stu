@@ -60,8 +60,17 @@ for epoch in range(2000):
     dout = loss.backward()
 
     linear_model.backward(dout)
-    optimizer.step()
+    optimizer.step() 
     optimizer.zero_grad()
     if epoch % 100 == 0:
         losses.append(l)
         print(f"Epoch {epoch:4d} | Loss: {l:.6f}")
+
+Y_pred_test = KSNet.KSSigmoid.apply(linear_model.forward(X_test))
+Y_pred_test = (Y_pred_test > 0.5).astype(int)
+
+Y_pred_train = KSNet.KSSigmoid.apply(linear_model.forward(X_train))
+Y_pred_train = (Y_pred_train > 0.5).astype(int)
+
+print(f"测试集准确率: {(Y_test == Y_pred_test).mean():.2%}")
+print(f"训练集准确率: {(Y_train == Y_pred_train).mean():.2%}")
