@@ -12,7 +12,6 @@ class BinaryLogisticLoss(KSLossBase):
     """
     def __init__(self):
         super().__init__()
-        self.sigmoid = KSSigmoid()
         self.sigmoid_out: np.ndarray | None = None  # 缓存sigmoid结果
 
     def forward(self, pred: np.ndarray, label: np.ndarray) -> float:
@@ -27,7 +26,7 @@ class BinaryLogisticLoss(KSLossBase):
         self.batch_size = pred.shape[0]
 
         # 复用数值稳定的 Sigmoid 前向计算，防止 exp 溢出
-        self.sigmoid_out = self.sigmoid.forward(pred)
+        self.sigmoid_out = KSSigmoid.apply(pred)
 
         # 裁剪防止 log(0)
         eps = 1e-12
