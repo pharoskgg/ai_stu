@@ -16,6 +16,9 @@ class KSLinear(KSNet):
 
         # Xavier初始化，替代单纯randn*0.01，提升数值稳定性
         scale = np.sqrt(2.0 / (input_dim + output_dim))
+        # 为了在较深层网络中让前向/反向传播的信号方差保持稳定，权重缩放因子根据输入输出维度来计算
+        # https://proceedings.mlr.press/v9/glorot10a/glorot10a.pdf Xavier初始化论文
+        # https://arxiv.org/abs/1502.01852 针对Relu的改进版初始化
         self.weight = np.random.randn(input_dim, output_dim) * scale
         self.bias = np.zeros(output_dim)
 
