@@ -7,6 +7,7 @@ from .optimizers.KSSGDOptimizer import SGDOptimizer as KSSGDOptimizer
 from .losses.KSBinaryLogisticLoss import BinaryLogisticLoss as KSBinaryLogisticLoss
 from .layers.KSSigmoid import KSSigmoid
 from .layers.KSReLU import KSReLU
+from .layers.KSDropout import KSDropout
 
 __all__ = [
     "KSangNet", "KSLossBase", "KSOptimizerBase",
@@ -15,4 +16,5 @@ __all__ = [
     "KSBinaryLogisticLoss",
     "KSSigmoid",
     "KSReLU",
+    "KSDropout"
 ]
