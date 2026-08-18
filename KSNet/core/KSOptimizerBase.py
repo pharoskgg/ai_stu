@@ -1,10 +1,11 @@
 from abc import ABC, abstractmethod
+from collections.abc import Iterable
 from KSNet.core.KSangNet import KSNet
 
 class KSOptimizerBase(ABC):
     """优化器统一抽象基类"""
-    def __init__(self, layers: list[KSNet], lr: float, weight_decay: float = 0.0):
-        self.layers = layers
+    def __init__(self, layers: Iterable[KSNet], lr: float, weight_decay: float = 0.0):
+        self.layers = list(layers) # 了让优化器能直接接收 model，否则调用传參为:model.layers
         self.lr = lr
         self.weight_decay = weight_decay
 

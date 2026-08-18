@@ -35,6 +35,12 @@ class KSNet(ABC):
         """
         pass
 
+    # 让所有层支持 output = layer(input) 这种调用方式，和 PyTorch Module 一致
+    # 否则需要写 output = layer.forward(input)，不够优雅
+    def __call__(self, x: np.ndarray) -> np.ndarray:
+        """支持 ``layer(x)`` 这种与 PyTorch Module 一致的调用方式。"""
+        return self.forward(x)
+
     @abstractmethod
     def backward(self, dout: np.ndarray) -> np.ndarray:
         """
