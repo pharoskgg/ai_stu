@@ -85,7 +85,9 @@ def forward_propagation(X, w1, b1, w2, b2, activation='tanh', keep_prob=1.0):
     # Dropout（仅隐藏层，keep_prob < 1 时启用）
     D1 = None
     if keep_prob < 1.0:
-        D1 = np.random.rand(a1.shape[0], a1.shape[1]) < keep_prob
+        # D1 = np.random.rand(a1.shape[0], a1.shape[1]) < keep_prob
+        # 与框架的实现生成掩码保持一致
+        D1 = (np.random.rand(a1.shape[1], a1.shape[0]) >= (1 - keep_prob)).T
         a1 *= D1
         a1 /= keep_prob
 
