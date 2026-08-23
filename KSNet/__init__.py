@@ -5,6 +5,7 @@ from .core.KSOptimizerBase import KSOptimizerBase
 from .core.KSSequential import KSSequential
 from .layers.KSLinear import KSLinear
 from .optimizers.KSSGDOptimizer import SGDOptimizer as KSSGDOptimizer
+from .optimizers.KSMomentumOptimizer import KSMomentumOptimizer
 from .losses.KSBinaryLogisticLoss import BinaryLogisticLoss as KSBinaryLogisticLoss
 from .layers.KSSigmoid import KSSigmoid
 from .layers.KSReLU import KSReLU
@@ -14,6 +15,7 @@ __all__ = [
     "KSangNet", "KSLossBase", "KSOptimizerBase", "KSSequential",
     "KSLinear",
     "KSSGDOptimizer",
+    "KSMomentumOptimizer",
     "KSBinaryLogisticLoss",
     "KSSigmoid",
     "KSReLU",
