@@ -5,26 +5,57 @@ class KSLinear(KSNet):
     """
     线性层（全连接层）实现
     输入输出都是二维张量，形状 (batch_size, dim)
+
+    :param weight_init: 权重初始化策略，可选 ``small_normal``（默认）、
+        ``xavier``、``he`` 或 ``zeros``。
     """
-    def __init__(self, input_dim: int, output_dim: int):
+    def __init__(
+        self,
+        input_dim: int,
+        output_dim: int,
+        weight_init: str = "small_normal",
+    ):
         super().__init__()
         # 参数合法性校验
         if input_dim <= 0 or output_dim <= 0:
             raise ValueError(f"维度必须大于0，input_dim={input_dim}, output_dim={output_dim}")
         self.input_dim = input_dim
         self.output_dim = output_dim
+        self.weight_init = weight_init
 
-        # Xavier初始化，替代单纯randn*0.01，提升数值稳定性
-        scale = np.sqrt(2.0 / (input_dim + output_dim))
-        # 为了在较深层网络中让前向/反向传播的信号方差保持稳定，权重缩放因子根据输入输出维度来计算
-        # https://proceedings.mlr.press/v9/glorot10a/glorot10a.pdf Xavier初始化论文
-        # https://arxiv.org/abs/1502.01852 针对Relu的改进版初始化
-        self.weight = np.random.randn(input_dim, output_dim) * scale
+        self.weight = self._initialize_weight(weight_init)
         self.bias = np.zeros(output_dim)
 
         # 预分配梯度数组，zero_grad可原地清零
         self.w_grad = np.zeros_like(self.weight)
         self.b_grad = np.zeros_like(self.bias)
+
+    def _initialize_weight(self, weight_init: str) -> np.ndarray:
+        """按指定策略创建权重矩阵。"""
+        shape = (self.input_dim, self.output_dim)
+
+        # Xavier初始化，替代单纯randn*0.01，提升数值稳定性。
+        # 为了在较深层网络中让前向/反向传播的信号方差保持稳定，权重缩放因子根据输入输出维度来计算。
+        # https://proceedings.mlr.press/v9/glorot10a/glorot10a.pdf Xavier初始化论文
+        # https://arxiv.org/abs/1502.01852 针对Relu的改进版初始化
+        if weight_init == "small_normal":
+            # 保持本项目原有的默认行为，兼容已有训练脚本。
+            return np.random.randn(*shape) * 0.01
+        if weight_init == "xavier":
+            # Glorot/Xavier normal：适合 tanh、sigmoid 等激活函数。
+            scale = np.sqrt(2.0 / (self.input_dim + self.output_dim))
+            return np.random.randn(*shape) * scale
+        if weight_init == "he":
+            # He normal：补偿 ReLU 约一半输出为 0 的方差损失。
+            scale = np.sqrt(2.0 / self.input_dim)
+            return np.random.randn(*shape) * scale
+        if weight_init == "zeros":
+            return np.zeros(shape)
+
+        valid_options = "small_normal, xavier, he, zeros"
+        raise ValueError(
+            f"不支持的 weight_init={weight_init!r}，可选值：{valid_options}"
+        )
 
     def forward(self, x: np.ndarray) -> np.ndarray:
         """
