@@ -7,6 +7,7 @@ from .layers.KSLinear import KSLinear
 from .optimizers.KSSGDOptimizer import SGDOptimizer as KSSGDOptimizer
 from .optimizers.KSMomentumOptimizer import KSMomentumOptimizer
 from .optimizers.KSRMSPropOptimizer import KSRMSPropOptimizer
+from .optimizers.KSAdamOptimizer import KSAdamOptimizer
 from .losses.KSBinaryLogisticLoss import BinaryLogisticLoss as KSBinaryLogisticLoss
 from .layers.KSSigmoid import KSSigmoid
 from .layers.KSReLU import KSReLU
@@ -18,6 +19,7 @@ __all__ = [
     "KSSGDOptimizer",
     "KSMomentumOptimizer",
     "KSRMSPropOptimizer",
+    "KSAdamOptimizer",
     "KSBinaryLogisticLoss",
     "KSSigmoid",
     "KSReLU",
