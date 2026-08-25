@@ -12,6 +12,7 @@ from .losses.KSBinaryLogisticLoss import BinaryLogisticLoss as KSBinaryLogisticL
 from .layers.KSSigmoid import KSSigmoid
 from .layers.KSReLU import KSReLU
 from .layers.KSDropout import KSDropout
+from .layers.KSBatchNormal import KSBatchNormal
 
 __all__ = [
     "KSangNet", "KSLossBase", "KSOptimizerBase", "KSSequential",
@@ -23,5 +24,6 @@ __all__ = [
     "KSBinaryLogisticLoss",
     "KSSigmoid",
     "KSReLU",
-    "KSDropout"
+    "KSDropout",
+    "KSBatchNormal"
 ]
