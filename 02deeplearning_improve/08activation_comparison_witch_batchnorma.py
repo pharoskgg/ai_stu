@@ -70,18 +70,30 @@ ACTIVATION_FUNCTIONS = {
 }
 
 # ==================== 3. Batch Normalization 辅助函数 ====================
-def batch_norm_forward(z, gamma, beta, eps=1e-8):
-    """
-    Batch Normalization 前向传播
-    """
-    mu = np.mean(z, axis=1, keepdims=True)
-    var = np.var(z, axis=1, keepdims=True)
-    sigma = np.sqrt(var + eps)
-    z_norm = (z - mu) / sigma
-    z_out = gamma * z_norm + beta
+def batch_norm_forward(z, gamma, beta, eps=1e-8, training=True,
+                       running_mean=None, running_var=None, momentum=0.9):
+    """Batch Normalization 前向传播。
 
-    cache = (z, mu, var, sigma, z_norm)
-    return z_out, cache
+    训练时用当前 batch 统计量并更新 running 统计量（动量 0.9，与 KSNet 一致）；
+    推理时用 running 统计量。
+    """
+    if training:
+        mu = np.mean(z, axis=1, keepdims=True)
+        var = np.var(z, axis=1, keepdims=True)
+        sigma = np.sqrt(var + eps)
+        z_norm = (z - mu) / sigma
+
+        running_mean = momentum * running_mean + (1 - momentum) * mu
+        running_var = momentum * running_var + (1 - momentum) * var
+
+        cache = (z, mu, var, sigma, z_norm)
+    else:
+        sigma = np.sqrt(running_var + eps)
+        z_norm = (z - running_mean) / sigma
+        cache = None
+
+    z_out = gamma * z_norm + beta
+    return z_out, cache, running_mean, running_var
 
 def batch_norm_backward(dz_out, cache, gamma, eps=1e-8):
     """
@@ -102,19 +114,22 @@ def batch_norm_backward(dz_out, cache, gamma, eps=1e-8):
     return dz, dgamma, dbeta
 
 # ==================== 4. 神经网络核心函数 ====================
-def forward_propagation(X, w1, b1, w2, b2, gamma1, beta1, activation='tanh'):
+def forward_propagation(X, w1, b1, w2, b2, gamma1, beta1, activation='tanh',
+                        training=True, running_mean=None, running_var=None):
     act_func = ACTIVATION_FUNCTIONS[activation]['func']
 
     # 隐藏层
     z1 = np.dot(w1.T, X) + b1
-    z1_bn, bn_cache1 = batch_norm_forward(z1, gamma1, beta1)
+    z1_bn, bn_cache1, running_mean, running_var = batch_norm_forward(
+        z1, gamma1, beta1, training=training,
+        running_mean=running_mean, running_var=running_var)
     a1 = act_func(z1_bn)
 
     # 输出层
     z2 = np.dot(w2.T, a1) + b2
     a2 = sigmoid(z2)
 
-    return z1, a1, a2, bn_cache1
+    return z1, a1, a2, bn_cache1, running_mean, running_var
 
 def logistic_loss(A, Y):
     """逻辑回归损失函数"""
@@ -126,9 +141,10 @@ def backward_propagation(X, Y, W2, a1, a2, bn_cache1, gamma1, activation='tanh')
     act_deriv = ACTIVATION_FUNCTIONS[activation]['deriv']
     m = X.shape[1]
 
-    dz2 = a2 - Y
-    dw2 = (1 / m) * np.dot(a1, dz2.T)
-    db2 = (1 / m) * np.sum(dz2, axis=1, keepdims=True)
+    # 统一为均值约定：dz2 直接带 1/m，后续各层（含 BN 的 gamma/beta）不再重复除 m
+    dz2 = (a2 - Y) / m
+    dw2 = np.dot(a1, dz2.T)
+    db2 = np.sum(dz2, axis=1, keepdims=True)
 
     # 隐藏层梯度
     da1 = np.dot(W2, dz2)
@@ -137,13 +153,15 @@ def backward_propagation(X, Y, W2, a1, a2, bn_cache1, gamma1, activation='tanh')
     # BN 反向
     dz1, dgamma1, dbeta1 = batch_norm_backward(dz1_bn, bn_cache1, gamma1)
 
-    dw1 = (1 / m) * np.dot(X, dz1.T)
-    db1 = (1 / m) * np.sum(dz1, axis=1, keepdims=True)
+    dw1 = np.dot(X, dz1.T)
+    db1 = np.sum(dz1, axis=1, keepdims=True)
 
     return dw1, db1, dw2, db2, dgamma1, dbeta1
 
-def predict(X, w1, b1, w2, b2, gamma1, beta1, activation='tanh'):
-    _, _, A, _ = forward_propagation(X, w1, b1, w2, b2, gamma1, beta1, activation=activation)
+def predict(X, w1, b1, w2, b2, gamma1, beta1, running_mean, running_var, activation='tanh'):
+    _, _, A, _, _, _ = forward_propagation(X, w1, b1, w2, b2, gamma1, beta1,
+                                           activation=activation, training=False,
+                                           running_mean=running_mean, running_var=running_var)
     return (A >= 0.5).astype(int)
 
 def accuracy(Y_pre, Y_true):
@@ -190,6 +208,8 @@ def train_neural_network(X_train, Y_train, X_test, Y_test, activation_type,
     b2 = np.zeros((1, 1))
     gamma1 = np.ones((h, 1))
     beta1 = np.zeros((h, 1))
+    running_mean = np.zeros((h, 1))
+    running_var = np.ones((h, 1))
 
     loss_history = []
     train_acc_history = []
@@ -205,8 +225,9 @@ def train_neural_network(X_train, Y_train, X_test, Y_test, activation_type,
         mini_batches = generate_mini_batches(X_train, Y_train, mini_batch_size, seed=epoch)
 
         for X_batch, Y_batch in mini_batches:
-            z1, a1, a2, bn_cache1 = forward_propagation(
-                X_batch, w1, b1, w2, b2, gamma1, beta1, activation_type)
+            z1, a1, a2, bn_cache1, running_mean, running_var = forward_propagation(
+                X_batch, w1, b1, w2, b2, gamma1, beta1, activation_type,
+                training=True, running_mean=running_mean, running_var=running_var)
             loss = logistic_loss(a2, Y_batch)
 
             dw1, db1, dw2, db2, dgamma1, dbeta1 = backward_propagation(
@@ -222,25 +243,30 @@ def train_neural_network(X_train, Y_train, X_test, Y_test, activation_type,
 
             if step % 50 == 0:
                 loss_history.append(loss)
-                Y_pred_train = predict(X_train, w1, b1, w2, b2, gamma1, beta1, activation_type)
+                Y_pred_train = predict(X_train, w1, b1, w2, b2, gamma1, beta1,
+                                       running_mean, running_var, activation_type)
                 train_acc_history.append(accuracy(Y_pred_train, Y_train))
-                Y_pred_test = predict(X_test, w1, b1, w2, b2, gamma1, beta1, activation_type)
+                Y_pred_test = predict(X_test, w1, b1, w2, b2, gamma1, beta1,
+                                      running_mean, running_var, activation_type)
                 test_acc_history.append(accuracy(Y_pred_test, Y_test))
 
                 if step % 1000 == 0:
-                    print(f"Step {step:5d} | Loss {loss:.4f} | Train {train_acc_history[-1]:.4f} | Test {test_acc_history[-1]:.4f}")
+                    print(f"Step {step:5d} | Loss {loss:.6f} | Train {train_acc_history[-1]:.4f} | Test {test_acc_history[-1]:.4f}")
 
             step += 1
 
     # 最终结果
-    final_train_acc = accuracy(predict(X_train, w1, b1, w2, b2, gamma1, beta1, activation_type), Y_train)
-    final_test_acc = accuracy(predict(X_test, w1, b1, w2, b2, gamma1, beta1, activation_type), Y_test)
+    final_train_acc = accuracy(predict(X_train, w1, b1, w2, b2, gamma1, beta1,
+                                       running_mean, running_var, activation_type), Y_train)
+    final_test_acc = accuracy(predict(X_test, w1, b1, w2, b2, gamma1, beta1,
+                                      running_mean, running_var, activation_type), Y_test)
 
     print(f"\n最终 → 训练: {final_train_acc*100:.2f}% | 测试: {final_test_acc*100:.2f}%")
 
     return {
         'w1': w1, 'b1': b1, 'w2': w2, 'b2': b2,
         'gamma1': gamma1, 'beta1': beta1,
+        'running_mean': running_mean, 'running_var': running_var,
         'loss_history': loss_history,
         'train_acc_history': train_acc_history,
         'test_acc_history': test_acc_history,
@@ -248,14 +274,15 @@ def train_neural_network(X_train, Y_train, X_test, Y_test, activation_type,
         'final_test_acc': final_test_acc
     }
 
-def plot_decision_boundary(X, Y, w1, b1, w2, b2, gamma1, beta1, ax, activation='tanh', title='Decision Boundary'):
+def plot_decision_boundary(X, Y, w1, b1, w2, b2, gamma1, beta1, running_mean, running_var, ax, activation='tanh', title='Decision Boundary'):
     x_min, x_max = X[0, :].min() - 0.5, X[0, :].max() + 0.5
     y_min, y_max = X[1, :].min() - 0.5, X[1, :].max() + 0.5
 
     xx, yy = np.meshgrid(np.arange(x_min, x_max, 0.02),
                          np.arange(y_min, y_max, 0.02))
     grid_points = np.c_[xx.ravel(), yy.ravel()].T
-    predictions = predict(grid_points, w1, b1, w2, b2, gamma1, beta1, activation=activation)
+    predictions = predict(grid_points, w1, b1, w2, b2, gamma1, beta1,
+                          running_mean, running_var, activation=activation)
     predictions = predictions.reshape(xx.shape)
 
     ax.contourf(xx, yy, predictions, cmap=plt.cm.RdBu, alpha=0.3)
@@ -277,7 +304,7 @@ for act_type in activation_types:
     )
 
 # ==================== 6. 可视化对比 ====================
-fig, axes = plt.subplots(len(activation_types), 2, figsize=(14, 12))
+fig, axes = plt.subplots(len(activation_types), 2, figsize=(14, 12), squeeze=False)
 
 for idx, act_type in enumerate(activation_types):
     res = results[act_type]
@@ -295,7 +322,8 @@ for idx, act_type in enumerate(activation_types):
     # 决策边界
     ax2 = axes[idx, 1]
     plot_decision_boundary(X_train, Y_train, res['w1'], res['b1'], res['w2'], res['b2'],
-                            res['gamma1'], res['beta1'], ax2, act_type, f'{act_type.upper()} 决策边界')
+                            res['gamma1'], res['beta1'], res['running_mean'], res['running_var'],
+                            ax2, act_type, f'{act_type.upper()} 决策边界')
 
 plt.tight_layout()
 plt.savefig('08activation_comparison_with_batchnormal.png', dpi=150, bbox_inches='tight')
