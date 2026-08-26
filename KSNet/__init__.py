@@ -9,8 +9,12 @@ from .optimizers.KSMomentumOptimizer import KSMomentumOptimizer
 from .optimizers.KSRMSPropOptimizer import KSRMSPropOptimizer
 from .optimizers.KSAdamOptimizer import KSAdamOptimizer
 from .losses.KSBinaryLogisticLoss import BinaryLogisticLoss as KSBinaryLogisticLoss
+from .losses.KSSoftmaxCrossEntropyLoss import (
+    SoftmaxCrossEntropyLoss as KSSoftmaxCrossEntropyLoss,
+)
 from .layers.KSSigmoid import KSSigmoid
 from .layers.KSReLU import KSReLU
+from .layers.KSSoftmax import KSSoftmax
 from .layers.KSDropout import KSDropout
 from .layers.KSBatchNormal import KSBatchNormal
 
@@ -22,8 +26,10 @@ __all__ = [
     "KSRMSPropOptimizer",
     "KSAdamOptimizer",
     "KSBinaryLogisticLoss",
+    "KSSoftmaxCrossEntropyLoss",
     "KSSigmoid",
     "KSReLU",
+    "KSSoftmax",
     "KSDropout",
     "KSBatchNormal"
 ]
