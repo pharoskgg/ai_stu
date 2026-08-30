@@ -27,7 +27,8 @@ dropout_linear1_relu = KSNet.KSDropout(dropout_rate=dropout_rate)
 linear2 = KSNet.KSLinear(h, 1)
 logit_loss = KSNet.KSBinaryLogisticLoss()
 layer_list = [linear1, linear1_relu, dropout_linear1_relu, linear2]
-optimizer = KSNet.KSSGDOptimizer(layers=layer_list, lr=learn_rate)
+params = [param for layer in layer_list for param in layer.parameters()]
+optimizer = KSNet.KSSGDOptimizer(params=params, lr=learn_rate)
 
 
 for epoch in range(loop_count):
@@ -59,7 +60,6 @@ for epoch in range(loop_count):
 
 
     
-
 
 
 

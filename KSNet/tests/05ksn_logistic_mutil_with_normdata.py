@@ -34,7 +34,7 @@ model = KSNet.KSSequential(
 )
 
 logit_loss = KSNet.KSBinaryLogisticLoss()
-optimizer = KSNet.KSSGDOptimizer(model, lr=learn_rate)
+optimizer = KSNet.KSSGDOptimizer(model.parameters(), lr=learn_rate)
 
 for epoch in range(loop_count):
     model.train()
@@ -58,7 +58,6 @@ for epoch in range(loop_count):
 
 
     
-
 
 
 

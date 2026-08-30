@@ -56,7 +56,7 @@ def train_neural_network(
     # from_logits=False 表示 forward 接收的是 Softmax 概率；反向时损失先返回
     # dL/dp，随后 KSSequential 会调用 KSSoftmax.backward() 得到 dL/dlogits。
     loss_fn = KSNet.KSSoftmaxCrossEntropyLoss(from_logits=False)
-    optimizer = KSNet.KSSGDOptimizer(model, lr=learn_rate)
+    optimizer = KSNet.KSSGDOptimizer(model.parameters(), lr=learn_rate)
 
     print(f"\n{'=' * 60}")
     print("训练 KSNet ReLU + Softmax 多分类模型")

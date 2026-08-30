@@ -25,7 +25,8 @@ linear1_relu = KSNet.KSReLU()
 linear2 = KSNet.KSLinear(h, 1)
 logit_loss = KSNet.KSBinaryLogisticLoss()
 layer_list = [linear1, linear1_relu, linear2]
-optimizer = KSNet.KSSGDOptimizer(layers=layer_list, lr=learn_rate, weight_decay=_lambda)
+params = [param for layer in layer_list for param in layer.parameters()]
+optimizer = KSNet.KSSGDOptimizer(params=params, lr=learn_rate, weight_decay=_lambda)
 
 
 
@@ -35,8 +36,8 @@ for epoch in range(loop_count):
     a2 = linear2.forward(relu_a1)
 
     loss = logit_loss.forward(a2, Y_train)
-    # 与优化器中的 weight_decay 对应：λ/2 * (||W1||² + ||W2||²)。
-    loss += _lambda / 2 * (np.sum(linear1.weight ** 2) + np.sum(linear2.weight ** 2))
+    # 与优化器中的 weight_decay 对应：对传入优化器的全部参数施加 L2。
+    loss += _lambda / 2 * sum(np.sum(param ** 2) for param, _ in params)
     
     dout = logit_loss.backward()
     
@@ -57,7 +58,6 @@ for epoch in range(loop_count):
 
 
     
-
 
 
 

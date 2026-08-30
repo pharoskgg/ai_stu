@@ -35,7 +35,7 @@ model = KSNet.KSSequential(
 )
 
 logit_loss = KSNet.KSBinaryLogisticLoss()
-optimizer = KSNet.KSRMSPropOptimizer(model, lr=learn_rate, beta=beta)
+optimizer = KSNet.KSRMSPropOptimizer(model.parameters(), lr=learn_rate, beta=beta)
 
 step = 0  # 全局迭代步数，跨 epoch 累计
 loss_history = []  # 每 100 步记录一次当前 batch 的损失

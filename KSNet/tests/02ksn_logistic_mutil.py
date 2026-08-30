@@ -19,7 +19,8 @@ linear1_relu = KSNet.KSReLU()
 linear2 = KSNet.KSLinear(h, 1)
 logit_loss = KSNet.KSBinaryLogisticLoss()
 layer_list = [linear1, linear1_relu, linear2]
-optimizer = KSNet.KSSGDOptimizer(layers= layer_list, lr=0.4)
+params = [param for layer in layer_list for param in layer.parameters()]
+optimizer = KSNet.KSSGDOptimizer(params=params, lr=0.4)
 
 losses = []
 
@@ -49,7 +50,6 @@ for epoch in range(8000):
 
 
     
-
 
 
 

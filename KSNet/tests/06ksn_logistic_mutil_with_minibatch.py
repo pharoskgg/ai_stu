@@ -67,7 +67,7 @@ model = KSNet.KSSequential(
 )
 
 logit_loss = KSNet.KSBinaryLogisticLoss()
-optimizer = KSNet.KSSGDOptimizer(model, lr=learn_rate)
+optimizer = KSNet.KSSGDOptimizer(model.parameters(), lr=learn_rate)
 
 step = 0  # 全局迭代步数，跨 epoch 累计
 loss_history = []  # 每 50 步记录一次当前 batch 的损失

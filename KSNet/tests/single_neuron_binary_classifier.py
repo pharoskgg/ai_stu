@@ -23,7 +23,7 @@ print(f"测试集: X{X_test.shape}, Y{Y_test.shape}")
 linear_model = KSNet.KSLinear(input_dim=2, output_dim=1)
 layers = [linear_model]
 loss = KSNet.KSBinaryLogisticLoss()
-optimizer = KSNet.KSSGDOptimizer(lr=0.5, layers=layers)
+optimizer = KSNet.KSSGDOptimizer(linear_model.parameters(), lr=0.5)
 
 losses = []  # 记录每100轮的损失
 
