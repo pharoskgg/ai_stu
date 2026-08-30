@@ -13,13 +13,12 @@ class KSAdamOptimizer(KSOptimizerBase):
     ``v = beta2 * v + (1 - beta2) * grad**2``
     ``param -= lr * m_hat / (sqrt(v_hat) + epsilon)``
 
-    ``weight_decay`` 沿用本项目 SGD、Momentum 和 RMSProp 的约定：只对
-    ``layer.weight`` 添加 L2 正则项，不衰减 bias。
+    ``weight_decay`` 作用于传给优化器的全部参数。
     """
 
     def __init__(
         self,
-        layers,
+        params,
         lr: float = 0.001,
         beta1: float = 0.9,
         beta2: float = 0.999,
@@ -33,7 +32,7 @@ class KSAdamOptimizer(KSOptimizerBase):
         if epsilon <= 0.0:
             raise ValueError(f"epsilon 必须大于 0，实际为 {epsilon}")
 
-        super().__init__(layers, lr, weight_decay)
+        super().__init__(params, lr, weight_decay)
         self.beta1 = beta1
         self.beta2 = beta2
         self.epsilon = epsilon
@@ -47,41 +46,33 @@ class KSAdamOptimizer(KSOptimizerBase):
         beta1_correction = 1.0 - self.beta1 ** self.step_count
         beta2_correction = 1.0 - self.beta2 ** self.step_count
 
-        for layer in self.layers:
-            if not layer.trainable:
-                continue
+        for param, grad in self._get_trainable_params():
+            update_grad = grad
+            if self.weight_decay:
+                update_grad = grad + self.weight_decay * param
 
-            for param, grad in layer.parameters():
-                if grad is None:
-                    continue
+            parameter_id = id(param)
+            first_moment = self.first_moment.setdefault(
+                parameter_id, np.zeros_like(param)
+            )
+            second_moment = self.second_moment.setdefault(
+                parameter_id, np.zeros_like(param)
+            )
 
-                # 与其他优化器保持一致：仅对权重施加 L2 正则化。
-                update_grad = grad
-                if self.weight_decay and param is layer.weight:
-                    update_grad = grad + self.weight_decay * param
+            first_moment = (
+                self.beta1 * first_moment + (1.0 - self.beta1) * update_grad
+            )
+            second_moment = (
+                self.beta2 * second_moment
+                + (1.0 - self.beta2) * np.square(update_grad)
+            )
 
-                parameter_id = id(param)
-                first_moment = self.first_moment.setdefault(
-                    parameter_id, np.zeros_like(param)
-                )
-                second_moment = self.second_moment.setdefault(
-                    parameter_id, np.zeros_like(param)
-                )
+            # 从 0 初始化的 EMA 在前几步会偏小，Adam 用偏差修正抵消它。
+            corrected_first_moment = first_moment / beta1_correction
+            corrected_second_moment = second_moment / beta2_correction
+            param -= self.lr * corrected_first_moment / (
+                np.sqrt(corrected_second_moment) + self.epsilon
+            )
 
-                first_moment = (
-                    self.beta1 * first_moment + (1.0 - self.beta1) * update_grad
-                )
-                second_moment = (
-                    self.beta2 * second_moment
-                    + (1.0 - self.beta2) * np.square(update_grad)
-                )
-
-                # 从 0 初始化的 EMA 在前几步会偏小，Adam 用偏差修正抵消它。
-                corrected_first_moment = first_moment / beta1_correction
-                corrected_second_moment = second_moment / beta2_correction
-                param -= self.lr * corrected_first_moment / (
-                    np.sqrt(corrected_second_moment) + self.epsilon
-                )
-
-                self.first_moment[parameter_id] = first_moment
-                self.second_moment[parameter_id] = second_moment
+            self.first_moment[parameter_id] = first_moment
+            self.second_moment[parameter_id] = second_moment
