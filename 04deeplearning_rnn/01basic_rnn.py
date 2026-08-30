@@ -11,9 +11,13 @@ class RNN:
         self.w_hh = np.random.randn(hidden_size, hidden_size) * 0.1
 
         self.bias = np.zeros(self.hidden_size)
-        self.input = None
+        self.inputs = None
         self.hidden_states = None
         self.output = None
+
+        self.dweight = np.zeros_like(self.weight)
+        self.dw_hh = np.zeros_like(self.w_hh)
+        self.dbias = np.zeros_like(self.bias)
 
     def forward(self, inputs):
         inputs = np.asarray(inputs)
@@ -28,7 +32,7 @@ class RNN:
         if inputs.shape[0] == 0:
             raise ValueError("输入序列不能为空")
 
-        self.input = inputs
+        self.inputs = inputs
         hidden_states = [np.zeros(self.hidden_size)]
         for x_t in inputs:
             z = (
@@ -47,4 +51,53 @@ class RNN:
         return self.output
 
     def backward(self, dout):
-        
+        if self.hidden_states is None:
+            raise RuntimeError("必须先调用 forward")
+
+        dout = np.asarray(dout)
+        sequence_length = self.inputs.shape[0]
+
+        self.dweight.fill(0)
+        self.dw_hh.fill(0)
+        self.dbias.fill(0)
+
+        if self.return_sequences:
+            expected_shape = (sequence_length, self.hidden_size)
+            if dout.shape != expected_shape:
+                raise ValueError(
+                    f"dout形状应为{expected_shape}，实际为{dout.shape}"
+                )
+            direct_dh = dout
+        else:
+            expected_shape = (self.hidden_size,)
+            if dout.shape != expected_shape:
+                raise ValueError(
+                    f"dout形状应为{expected_shape}，实际为{dout.shape}"
+                )
+            direct_dh = np.zeros(
+                (sequence_length, self.hidden_size),
+                dtype=np.result_type(dout, self.weight),
+            )
+            direct_dh[-1] = dout
+
+        dh_next = np.zeros(self.hidden_size)
+        d_inputs = np.zeros(self.inputs.shape)
+        for t in range(sequence_length - 1, -1, -1):
+            h_t = self.hidden_states[t + 1]
+            h_prev = self.hidden_states[t]
+
+            dh = direct_dh[t] + dh_next
+
+            dz = dh * (1 - h_t ** 2)
+
+            self.dw_hh += np.outer(h_prev, dz)
+
+            self.dweight += np.outer(self.inputs[t], dz)
+
+            self.dbias += dz
+
+            dh_next = self.w_hh @ dz
+
+            d_inputs[t] = dz @ self.weight.T
+
+        return d_inputs
