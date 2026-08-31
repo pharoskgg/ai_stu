@@ -1,11 +1,12 @@
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
-from typing import TypeAlias
+from typing import Optional, Tuple
 
 import numpy as np
 
 
-KSParameter: TypeAlias = tuple[np.ndarray, np.ndarray | None]
+# 兼容 Python 3.9；TypeAlias 和 ``X | None`` 需要更高版本支持。
+KSParameter = Tuple[np.ndarray, Optional[np.ndarray]]
 
 class KSOptimizerBase(ABC):
     """优化器统一抽象基类。
