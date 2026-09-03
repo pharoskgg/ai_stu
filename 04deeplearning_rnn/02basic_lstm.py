@@ -1,9 +1,10 @@
 import numpy as np
 
 class LSTM:
-    def __init__(self, input_size, hidden_size):
+    def __init__(self, input_size, hidden_size, return_sequences=False):
         self.input_size = input_size
         self.hidden_size = hidden_size
+        self.return_sequences = return_sequences
 
         scale = 0.01
 
@@ -21,7 +22,23 @@ class LSTM:
 
         self.weight_cell = np.random.randn(input_size, hidden_size) * scale
         self.hidden_cell = np.random.randn(hidden_size, hidden_size) * scale
-        self.b_celll = np.zeros(hidden_size)
+        self.b_cell = np.zeros(hidden_size)
+
+        self.dw_forget = np.zeros_like(self.weight_forget)
+        self.du_forget = np.zeros_like(self.hidden_forget)
+        self.db_forget = np.zeros_like(self.b_forget)
+
+        self.dw_input = np.zeros_like(self.weight_input)
+        self.du_input = np.zeros_like(self.hidden_input)
+        self.db_input = np.zeros_like(self.b_input)
+
+        self.dw_output = np.zeros_like(self.weight_output)
+        self.du_output = np.zeros_like(self.hidden_output)
+        self.db_output = np.zeros_like(self.b_output)
+
+        self.dw_mem_candidate = np.zeros_like(self.weight_cell)
+        self.du_mem_candidate = np.zeros_like(self.hidden_cell)
+        self.db_mem_candidate = np.zeros_like(self.b_cell)
         
     @staticmethod
     def tanh(x: np.ndarray):
@@ -32,26 +49,98 @@ class LSTM:
         x = np.clip(x, -500, 500)
         return 1.0 / (1.0 + np.exp(-x))
 
-    def forward(self, inputs: np.ndarray, h=None, c_h=None):
-        if h is None:
+    def forward(self, inputs: np.ndarray, state=None):
+        if state is None:
             h = np.zeros(self.hidden_size)
-        if c_h is None:
-            c_h = np.zeros(self.hidden_size)
+            c_t = np.zeros(self.hidden_size)
+        else:
+            h, c_t = state
 
+        self.cache = []
         outputs = []
+        self.inputs = inputs
+
         for x in inputs:
-            f_f = self.sigmoid(x @ self.weight_forget + h @ self.hidden_forget + self.b_forget)
-            i_f = self.sigmoid(x @ self.weight_input + h @ self.hidden_input + self.b_input)
-            o_f = self.sigmoid(x @ self.weight_output + h @ self.hidden_output + self.b_output)
-            mem_candidate = self.tanh(x @ self.weight_cell + h @ self.hidden_cell + self.b_celll)
+            h_prev = h
+            c_prev = c_t
 
-            c_h = f_f * c_h + i_f * mem_candidate
+            forget_gate = self.sigmoid(x @ self.weight_forget + h_prev @ self.hidden_forget + self.b_forget)
+            input_gate = self.sigmoid(x @ self.weight_input + h_prev @ self.hidden_input + self.b_input)
+            output_gate = self.sigmoid(x @ self.weight_output + h_prev @ self.hidden_output + self.b_output)
+            mem_candidate = self.tanh(x @ self.weight_cell + h_prev @ self.hidden_cell + self.b_cell)
 
-            h = o_f * self.tanh(c_h)
+            c_t = (forget_gate * c_prev + input_gate * mem_candidate)
+
+            h = output_gate * self.tanh(c_t)
             outputs.append(h.copy())
 
-        return np.stack(outputs), (h, c_h)
+            self.cache.append((x, h_prev, c_prev, forget_gate, input_gate, output_gate, mem_candidate, c_t,))
+
+        all_h = np.stack(outputs)
+        output = all_h if self.return_sequences else h
+
+        return output, (h, c_t)
 
     def backward(self, dout: np.ndarray):
+        time_steps = len(self.cache)
 
-        pass
+        # 将两种输出模式统一转换为每个时间步的梯度
+        if self.return_sequences:
+            doutputs = dout
+        else:
+            doutputs = np.zeros((time_steps, self.hidden_size))
+            doutputs[-1] = dout
+
+        dh_next = np.zeros(self.hidden_size)
+        dc_future = np.zeros(self.hidden_size)
+        forget_future = np.zeros(self.hidden_size)
+        dx = np.zeros_like(self.inputs)
+
+        for t in reversed(range(time_steps)):
+            (x, h_prev, c_prev, forget_gate, input_gate, output_gate, mem_candidate, c_t,) = self.cache[t]
+            dh = doutputs[t] + dh_next
+
+            dot = dh * self.tanh(c_t)
+
+            dct = dh * output_gate * (1 - self.tanh(c_t) ** 2) + dc_future * forget_future
+
+            dforget_t = dct * c_prev
+            dinput_t = dct * mem_candidate
+            dmem_candidate = dct * input_gate
+
+            # dct_prev = dct * forget_gate
+
+            da_f = dforget_t * forget_gate * (1 - forget_gate)
+            da_i = dinput_t * input_gate * (1 - input_gate) 
+            da_o = dot * output_gate * (1 - output_gate)
+            da_mem =  dmem_candidate * (1 - mem_candidate ** 2)
+
+            self.dw_forget += np.outer(x, da_f)
+            self.du_forget += np.outer(h_prev, da_f)
+            self.db_forget += da_f
+
+            self.dw_input += np.outer(x, da_i)
+            self.du_input += np.outer(h_prev, da_i)
+            self.db_input += da_i
+
+            self.dw_output += np.outer(x, da_o)
+            self.du_output += np.outer(h_prev, da_o)
+            self.db_output += da_o
+
+            self.dw_mem_candidate += np.outer(x, da_mem)
+            self.du_mem_candidate += np.outer(h_prev, da_mem)
+            self.db_mem_candidate += da_mem
+
+            dc_future = dct
+            forget_future = forget_gate
+
+            dh_next = da_f @ self.hidden_forget.T + da_o @ self.hidden_output.T + \
+                da_i @ self.hidden_input.T + da_mem @ self.hidden_cell.T
+
+            dx[t] = da_f @ self.weight_forget.T + da_i @ self.weight_input.T + \
+                da_mem @ self.weight_cell.T + da_o @ self.weight_output.T
+
+        return dx
+
+
+
