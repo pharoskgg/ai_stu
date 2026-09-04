@@ -5,6 +5,7 @@ from .core.KSOptimizerBase import KSOptimizerBase
 from .core.KSSequential import KSSequential
 from .core.KSResidual import KSResidual
 from .layers.KSLinear import KSLinear
+from .layers.KSLSTM import KSLSTM
 from .optimizers.KSSGDOptimizer import SGDOptimizer as KSSGDOptimizer
 from .optimizers.KSMomentumOptimizer import KSMomentumOptimizer
 from .optimizers.KSRMSPropOptimizer import KSRMSPropOptimizer
@@ -22,6 +23,7 @@ from .layers.KSBatchNormal import KSBatchNormal
 __all__ = [
     "KSangNet", "KSLossBase", "KSOptimizerBase", "KSSequential", "KSResidual",
     "KSLinear",
+    "KSLSTM",
     "KSSGDOptimizer",
     "KSMomentumOptimizer",
     "KSRMSPropOptimizer",
