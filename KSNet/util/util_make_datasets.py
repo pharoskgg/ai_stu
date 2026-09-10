@@ -765,6 +765,41 @@ def generate_number_seq2seq_dataset(
     )
 
 
+def get_seq2seq_data(
+    dataset: NumberSeq2SeqDataset,
+    direction: str = "arabic_to_chinese",
+    split: str = "train",
+) -> dict:
+    """以训练脚本常用的字典形式获取 Seq2Seq 数据。
+
+    参数：
+        dataset: ``generate_number_seq2seq_dataset`` 返回的数据集对象。
+        direction: ``arabic_to_chinese`` 或 ``chinese_to_arabic``，也支持中文
+            方向名称和 ``ar2zh``/``zh2ar`` 别名。
+        split: ``train`` 或 ``test``，也支持 ``训练集``/``测试集``。
+
+    返回字典中的 ``source_ids``、``decoder_input_ids`` 和
+    ``decoder_target_ids`` 已经完成 padding，可直接用于训练；同时返回当前
+    方向对应的共享词表和序列长度。
+    """
+    if not isinstance(dataset, NumberSeq2SeqDataset):
+        raise TypeError(
+            "dataset 必须是 generate_number_seq2seq_dataset 返回的对象"
+        )
+
+    data = dataset.get_translation_data(direction=direction, split=split)
+    return {
+        "direction": data.direction,
+        "source_ids": data.source_ids,
+        "decoder_input_ids": data.decoder_input_ids,
+        "decoder_target_ids": data.decoder_target_ids,
+        "source_lengths": data.source_lengths,
+        "target_lengths": data.target_lengths,
+        "source_vocab": data.source_vocab,
+        "target_vocab": data.target_vocab,
+    }
+
+
 # 更短的名字，方便在 notebook 或训练脚本中使用。
 generate_number_dataset = generate_number_seq2seq_dataset
 generate_seq2seq_dataset = generate_number_seq2seq_dataset
