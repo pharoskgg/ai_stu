@@ -257,6 +257,37 @@ class Seq2SeqSplit:
     def __len__(self) -> int:
         return len(self.numbers)
 
+    @property
+    def encoder_input_ids(self) -> np.ndarray:
+        """编码器输入 token ids 的直观别名。
+
+        ``source_ids`` 保留用于兼容已有代码；在 Seq2Seq 训练代码中，
+        ``encoder_input_ids`` 更明确地表达了这组序列的用途。
+        """
+        return self.source_ids
+
+    @property
+    def decoder_lengths(self) -> np.ndarray:
+        """decoder 每个样本的有效时间步数量（不包含最后的 padding）。"""
+        # target_ids 是 <SOS> + target + <EOS>，而 decoder 的输入/标签
+        # 分别是右移后的两半，因此有效长度比 target_lengths 少 1。
+        return self.target_lengths - 1
+
+    @property
+    def encoder_mask(self) -> np.ndarray:
+        """编码器 padding mask；有效 token 为 True。"""
+        return self.source_ids != 0
+
+    @property
+    def decoder_target_mask(self) -> np.ndarray:
+        """decoder 标签 padding mask；有效标签为 True。"""
+        return self.decoder_target_ids != 0
+
+    @property
+    def decoder_input_mask(self) -> np.ndarray:
+        """decoder 输入 padding mask；有效 token 为 True。"""
+        return self.decoder_input_ids != 0
+
     def __getitem__(self, index: int) -> dict:
         """按样本取出训练 Seq2Seq 所需字段。"""
         return {
@@ -264,11 +295,16 @@ class Seq2SeqSplit:
             "source_text": self.source_text[index],
             "target_text": self.target_text[index],
             "source_ids": self.source_ids[index],
+            "encoder_input_ids": self.encoder_input_ids[index],
             "target_ids": self.target_ids[index],
             "decoder_input_ids": self.decoder_input_ids[index],
             "decoder_target_ids": self.decoder_target_ids[index],
             "source_length": int(self.source_lengths[index]),
             "target_length": int(self.target_lengths[index]),
+            "decoder_length": int(self.decoder_lengths[index]),
+            "encoder_mask": self.encoder_mask[index],
+            "decoder_input_mask": self.decoder_input_mask[index],
+            "decoder_target_mask": self.decoder_target_mask[index],
         }
 
 
@@ -522,8 +558,8 @@ class NumberSeq2SeqDataset:
         字符对应的 id，并在末尾添加 ``<EOS>``。当 ``token_type="中文"``
         时也可以传入 ``"一千二百三十四"``；若传入数字字符串，会先转换成
         中文数字再编码。``as_target`` 用于双向翻译时区分 encoder 输入和
-        decoder 目标：目标序列包含 ``<SOS>`` 和 ``<EOS>``，输入序列只包含
-        ``<EOS>``。
+        decoder 目标：目标序列包含 ``<SOS>`` 和 ``<EOS>``，encoder 输入只在
+        末尾添加 ``<EOS>``。
         """
         normalized_type = self._normalize_token_type(token_type)
         if isinstance(text, (int, np.integer)) and not isinstance(text, bool):
@@ -537,7 +573,7 @@ class NumberSeq2SeqDataset:
             as_target = normalized_type == "chinese"
 
         if normalized_type == "arabic":
-            if not text.isdigit():
+            if any(character not in "0123456789" for character in text):
                 raise ValueError("阿拉伯输入只能包含 0 到 9")
             vocab = self.source_vocab
             add_sos = add_special_tokens and as_target
@@ -778,9 +814,10 @@ def get_seq2seq_data(
             方向名称和 ``ar2zh``/``zh2ar`` 别名。
         split: ``train`` 或 ``test``，也支持 ``训练集``/``测试集``。
 
-    返回字典中的 ``source_ids``、``decoder_input_ids`` 和
+    返回字典中的 ``encoder_input_ids``、``decoder_input_ids`` 和
     ``decoder_target_ids`` 已经完成 padding，可直接用于训练；同时返回当前
-    方向对应的共享词表和序列长度。
+    方向对应的词表、有效长度和 padding mask。``source_ids`` 是
+    ``encoder_input_ids`` 的兼容别名。
     """
     if not isinstance(dataset, NumberSeq2SeqDataset):
         raise TypeError(
@@ -791,10 +828,19 @@ def get_seq2seq_data(
     return {
         "direction": data.direction,
         "source_ids": data.source_ids,
+        "encoder_input_ids": data.encoder_input_ids,
+        "target_ids": data.target_ids,
         "decoder_input_ids": data.decoder_input_ids,
         "decoder_target_ids": data.decoder_target_ids,
         "source_lengths": data.source_lengths,
         "target_lengths": data.target_lengths,
+        "decoder_lengths": data.decoder_lengths,
+        "encoder_mask": data.source_ids != data.source_vocab.pad_id,
+        "decoder_input_mask": data.decoder_input_ids != data.target_vocab.pad_id,
+        "decoder_target_mask": data.decoder_target_ids != data.target_vocab.pad_id,
+        "source_text": data.source_text,
+        "target_text": data.target_text,
+        "numbers": data.numbers,
         "source_vocab": data.source_vocab,
         "target_vocab": data.target_vocab,
     }
