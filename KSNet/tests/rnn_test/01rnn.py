@@ -18,31 +18,13 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from KSNet.util import generate_number_seq2seq_dataset, get_seq2seq_data
+import KSNet
 
-
-dataset = generate_number_seq2seq_dataset(
-    n_samples=10_000,
-    min_value=0,
-    max_value=100_000,
-    train_ratio=0.8,
-    random_state=42,
-    shared_vocab=True,
-)
-
+dataset = generate_number_seq2seq_dataset(n_samples=10_000, min_value=0, max_value=100_000)
 # 阿拉伯数字 -> 中文数字
-train_arabic_to_chinese = get_seq2seq_data(
-    dataset,
-    direction="arabic_to_chinese",
-    split="train",
-)
-
+train_arabic_to_chinese = get_seq2seq_data(dataset, direction="arabic_to_chinese", split="train",)
 # 中文数字 -> 阿拉伯数字
-train_chinese_to_arabic = get_seq2seq_data(
-    dataset,
-    direction="chinese_to_arabic",
-    split="train",
-)
-
+train_chinese_to_arabic = get_seq2seq_data(dataset, direction="chinese_to_arabic", split="train",)
 
 # 方向一：阿拉伯数字 -> 中文数字
 encoder_input_ids = train_arabic_to_chinese["encoder_input_ids"]
@@ -84,5 +66,60 @@ def check_ready(name: str, data: dict) -> None:
     )
 
 
-check_ready("arabic_to_chinese", train_arabic_to_chinese)
-check_ready("chinese_to_arabic", train_chinese_to_arabic)
+# check_ready("arabic_to_chinese", train_arabic_to_chinese)
+# check_ready("chinese_to_arabic", train_chinese_to_arabic)
+
+
+embed_dim = dataset.vocab_size + 8
+encoder_hidden_dim = dataset.vocab_size + 16
+vocab_size = dataset.vocab_size
+
+encoder_embedding = KSNet.KSEmbedding(vocab_size=vocab_size, embedding_dim=embed_dim)
+encoder_rnn = KSNet.KSRnn(input_size=embed_dim, hidden_size=encoder_hidden_dim)
+
+decoder_embedding = KSNet.KSEmbedding(vocab_size=vocab_size, embedding_dim=embed_dim)
+decoder_rnn = KSNet.KSRnn(input_size=embed_dim, hidden_size=encoder_hidden_dim, return_sequences=True)
+decoder_fnn = KSNet.KSLinear(input_dim=encoder_hidden_dim, output_dim=vocab_size)
+
+loss = KSNet.KSSoftmaxCrossEntropyLoss()
+
+trainable_layers = [encoder_embedding, encoder_rnn, decoder_embedding, decoder_rnn, decoder_fnn,]
+params = [ param_and_grad
+    for layer in trainable_layers
+    for param_and_grad in layer.parameters()
+]
+optimizer = KSNet.KSAdamOptimizer(params, lr=0.001)
+
+epochs = 100
+for epoch in range(epochs):
+    for i, seq in enumerate(encoder_input_ids):
+        optimizer.zero_grad()
+        # 提取有效长度，去除pad
+        source_len = int(train_arabic_to_chinese["source_lengths"][i])
+        decoder_len = int(train_arabic_to_chinese["decoder_lengths"][i])
+
+        seq = seq[:source_len]
+        target_input_ids = decoder_input_ids[i, :decoder_len]
+        target_idx = decoder_target_ids[i, :decoder_len]
+
+        # 开始训练
+        encoder_input = encoder_embedding.forward(seq)
+        encoder_hidden = encoder_rnn.forward(encoder_input)
+
+        decoder_token = decoder_embedding.forward(target_input_ids)
+        decoder_hiddens = decoder_rnn.forward(decoder_token, encoder_hidden)
+
+        # decoder_hiddens = decoder_hiddens.reshape(-1, encoder_hidden_dim)
+        decoder_outputs = decoder_fnn.forward(decoder_hiddens)
+
+        loss_value = loss.forward(decoder_outputs, target_idx)
+
+        print(loss_value)
+        d_loss = loss.backward()
+        d_decoder_hidden = decoder_fnn.backward(d_loss)
+        d_decoder_input = decoder_rnn.backward(d_decoder_hidden)
+        decoder_embedding.backward(d_decoder_input)
+
+        d_encoder_input = encoder_rnn.backward(decoder_rnn.dh_initial)
+        encoder_embedding.backward(d_encoder_input)
+        optimizer.step()
