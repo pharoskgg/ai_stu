@@ -3,15 +3,36 @@ import numpy as np
 from typing import Optional
 
 class KSRnn(KSNet):
-    def __init__(self, input_size: int, hidden_size: int, return_sequences: bool = False):
+    """Tanh RNN 层。
+
+    默认对输入权重使用 Xavier normal，对循环权重使用正交初始化。
+    这比所有权重统一使用 ``randn * 0.01`` 更有利于 tanh RNN
+    在多个时间步上传递信号和梯度。
+    """
+
+    def __init__(
+        self,
+        input_size: int,
+        hidden_size: int,
+        return_sequences: bool = False,
+        weight_init: str = "xavier",
+        recurrent_init: str = "orthogonal",
+    ):
         super().__init__()
+        if not isinstance(input_size, int) or isinstance(input_size, bool) or input_size <= 0:
+            raise ValueError(f"input_size 必须是正整数，实际为 {input_size!r}")
+        if not isinstance(hidden_size, int) or isinstance(hidden_size, bool) or hidden_size <= 0:
+            raise ValueError(f"hidden_size 必须是正整数，实际为 {hidden_size!r}")
+
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.return_sequences = return_sequences
+        self.weight_init = weight_init
+        self.recurrent_init = recurrent_init
         self.trainable = True
 
-        self.w_h = np.random.randn(hidden_size, hidden_size) * 0.01
-        self.w_x = np.random.randn(hidden_size, input_size) * 0.01
+        self.w_x = self._initialize_input_weight(weight_init)
+        self.w_h = self._initialize_recurrent_weight(recurrent_init)
         self.b = np.zeros((hidden_size, 1))
 
         self.dw_x = np.zeros_like(self.w_x)
@@ -24,6 +45,36 @@ class KSRnn(KSNet):
         self.dh_initial = None
         self.mask = None
         self._batched_input = False
+
+    def _initialize_input_weight(self, strategy: str) -> np.ndarray:
+        shape = (self.hidden_size, self.input_size)
+        if strategy == "xavier":
+            scale = np.sqrt(2.0 / (self.input_size + self.hidden_size))
+            return np.random.randn(*shape) * scale
+        if strategy == "small_normal":
+            return np.random.randn(*shape) * 0.01
+        raise ValueError(
+            f"不支持的 weight_init={strategy!r}，可选值：xavier, small_normal"
+        )
+
+    def _initialize_recurrent_weight(self, strategy: str) -> np.ndarray:
+        shape = (self.hidden_size, self.hidden_size)
+        if strategy == "orthogonal":
+            matrix = np.random.randn(*shape)
+            q, r = np.linalg.qr(matrix)
+            # 固定 QR 分解的符号不确定性，仍保持 Q 正交。
+            signs = np.sign(np.diag(r))
+            signs[signs == 0] = 1.0
+            return q * signs
+        if strategy == "xavier":
+            scale = np.sqrt(1.0 / self.hidden_size)
+            return np.random.randn(*shape) * scale
+        if strategy == "small_normal":
+            return np.random.randn(*shape) * 0.01
+        raise ValueError(
+            "不支持的 recurrent_init="
+            f"{strategy!r}，可选值：orthogonal, xavier, small_normal"
+        )
 
     def forward(
         self,
