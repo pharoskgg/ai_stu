@@ -90,36 +90,71 @@ params = [ param_and_grad
 ]
 optimizer = KSNet.KSAdamOptimizer(params, lr=0.001)
 
-epochs = 100
+batch_size = 32
+epochs = 1000
+rng = np.random.default_rng(42)
+
 for epoch in range(epochs):
-    for i, seq in enumerate(encoder_input_ids):
+    indices = rng.permutation(len(encoder_input_ids))
+    epoch_loss_sum = 0.0
+    epoch_token_count = 0
+
+    for start in range(0, len(indices), batch_size):
+        batch_indices = indices[start : start + batch_size]
         optimizer.zero_grad()
-        # 提取有效长度，去除pad
-        source_len = int(train_arabic_to_chinese["source_lengths"][i])
-        decoder_len = int(train_arabic_to_chinese["decoder_lengths"][i])
 
-        seq = seq[:source_len]
-        target_input_ids = decoder_input_ids[i, :decoder_len]
-        target_idx = decoder_target_ids[i, :decoder_len]
+        # 只保留当前 batch 中需要的最大长度，减少 padding 计算。
+        source_max_len = int(
+            np.max(train_arabic_to_chinese["source_lengths"][batch_indices])
+        )
+        decoder_max_len = int(
+            np.max(train_arabic_to_chinese["decoder_lengths"][batch_indices])
+        )
 
-        # 开始训练
-        encoder_input = encoder_embedding.forward(seq)
-        encoder_hidden = encoder_rnn.forward(encoder_input)
+        source_ids = encoder_input_ids[batch_indices, :source_max_len]
+        source_mask = train_arabic_to_chinese["encoder_mask"][
+            batch_indices, :source_max_len
+        ]
+        target_input_ids = decoder_input_ids[
+            batch_indices, :decoder_max_len
+        ]
+        target_idx = decoder_target_ids[batch_indices, :decoder_max_len]
+        target_mask = train_arabic_to_chinese["decoder_target_mask"][
+            batch_indices, :decoder_max_len
+        ]
+
+        encoder_input = encoder_embedding.forward(source_ids)
+        encoder_hidden = encoder_rnn.forward(encoder_input, mask=source_mask)
 
         decoder_token = decoder_embedding.forward(target_input_ids)
-        decoder_hiddens = decoder_rnn.forward(decoder_token, encoder_hidden)
+        decoder_hiddens = decoder_rnn.forward(
+            decoder_token,
+            encoder_hidden,
+            mask=target_mask,
+        )
 
-        # decoder_hiddens = decoder_hiddens.reshape(-1, encoder_hidden_dim)
-        decoder_outputs = decoder_fnn.forward(decoder_hiddens)
+        flat_hiddens = decoder_hiddens.reshape(-1, encoder_hidden_dim)
+        flat_outputs = decoder_fnn.forward(flat_hiddens)
+        flat_targets = target_idx.reshape(-1)
+        flat_mask = target_mask.reshape(-1)
 
-        loss_value = loss.forward(decoder_outputs, target_idx)
+        # loss 只计算有效 token，不计入 <PAD>。
+        loss_value = loss.forward(flat_outputs[flat_mask], flat_targets[flat_mask])
+        valid_token_count = int(np.sum(flat_mask))
+        epoch_loss_sum += loss_value * valid_token_count
+        epoch_token_count += valid_token_count
 
-        print(loss_value)
-        d_loss = loss.backward()
-        d_decoder_hidden = decoder_fnn.backward(d_loss)
+        # 将有效 token 的 loss 梯度散射回完整的 (B*T, V) 张量。
+        d_outputs = np.zeros_like(flat_outputs)
+        d_outputs[flat_mask] = loss.backward()
+        d_decoder_hidden = decoder_fnn.backward(d_outputs).reshape(
+            len(batch_indices), decoder_max_len, encoder_hidden_dim
+        )
         d_decoder_input = decoder_rnn.backward(d_decoder_hidden)
         decoder_embedding.backward(d_decoder_input)
 
         d_encoder_input = encoder_rnn.backward(decoder_rnn.dh_initial)
         encoder_embedding.backward(d_encoder_input)
         optimizer.step()
+
+    print(f"epoch={epoch + 1}, loss={epoch_loss_sum / epoch_token_count:.6f}")

@@ -1,5 +1,6 @@
 from KSNet.core.KSangNet import KSNet
 import numpy as np
+from typing import Optional
 
 class KSRnn(KSNet):
     def __init__(self, input_size: int, hidden_size: int, return_sequences: bool = False):
@@ -17,79 +18,136 @@ class KSRnn(KSNet):
         self.dw_h = np.zeros_like(self.w_h)
         self.db = np.zeros_like(self.b)
 
-        # 包含初始状态 h0，形状为 (seq_len + 1, hidden_size, 1)
+        # 内部统一使用 (seq_len + 1, batch_size, hidden_size)。
         self.hidden_states = None
         # loss 对 h0 的梯度，Seq2Seq 中用它将 decoder 梯度传给 encoder。
         self.dh_initial = None
+        self.mask = None
+        self._batched_input = False
 
-    def forward(self, x: np.ndarray, h_prev = None) -> np.ndarray:
-        x = np.asanyarray(x)
-        self.inputs = x
-        
+    def forward(
+        self,
+        x: np.ndarray,
+        h_prev=None,
+        mask: Optional[np.ndarray] = None,
+    ) -> np.ndarray:
+        """支持单条 ``(T, D)`` 和 batch ``(B, T, D)`` 输入。
+
+        ``mask`` 形状为 ``(T,)`` 或 ``(B, T)``，True 表示有效时间步。
+        mask 为 False 时直接保留上一个隐藏状态，避免 padding 改变结果。
+        """
+        x = np.asarray(x)
+        if x.ndim not in (2, 3):
+            raise ValueError(f"RNN输入必须是 (T, D) 或 (B, T, D)，实际为 {x.shape}")
+        if x.shape[-1] != self.input_size:
+            raise ValueError(
+                f"输入特征维度应为 {self.input_size}，实际为 {x.shape[-1]}"
+            )
+
+        self._batched_input = x.ndim == 3
+        batch_inputs = x if self._batched_input else x[None, ...]
+        batch_size, sequence_length, _ = batch_inputs.shape
+        if sequence_length == 0:
+            raise ValueError("序列长度不能为 0")
+
         if h_prev is None:
-            h_prev = np.zeros((self.hidden_size, 1))
+            initial_hidden = np.zeros((batch_size, self.hidden_size))
         else:
-            h_prev = np.asarray(h_prev).reshape(self.hidden_size, 1)
-        # states[0] 保存 h0
-        hidden_states = [h_prev.copy()]
-        for x_t in x:
-            x_t = x_t.reshape(-1, 1)
-            h_prev = np.tanh(self.w_h @ h_prev + self.w_x @ x_t + self.b)
-            hidden_states.append(h_prev)
+            initial_hidden = np.asarray(h_prev)
+            if not self._batched_input and initial_hidden.size == self.hidden_size:
+                initial_hidden = initial_hidden.reshape(1, self.hidden_size)
+            if initial_hidden.shape != (batch_size, self.hidden_size):
+                raise ValueError(
+                    "h_prev 形状应为 "
+                    f"{(batch_size, self.hidden_size)}，实际为 {initial_hidden.shape}"
+                )
+
+        if mask is None:
+            batch_mask = np.ones((batch_size, sequence_length), dtype=bool)
+        else:
+            batch_mask = np.asarray(mask, dtype=bool)
+            if not self._batched_input and batch_mask.shape == (sequence_length,):
+                batch_mask = batch_mask[None, :]
+            if batch_mask.shape != (batch_size, sequence_length):
+                raise ValueError(
+                    f"mask 形状应为 {(batch_size, sequence_length)}，"
+                    f"实际为 {batch_mask.shape}"
+                )
+
+        self.inputs = batch_inputs
+        self.mask = batch_mask
+        hidden_states = [initial_hidden.copy()]
+        hidden = initial_hidden
+        bias = self.b.reshape(1, self.hidden_size)
+        for t in range(sequence_length):
+            candidate = np.tanh(
+                hidden @ self.w_h.T + batch_inputs[:, t, :] @ self.w_x.T + bias
+            )
+            active = batch_mask[:, t, None]
+            hidden = np.where(active, candidate, hidden)
+            hidden_states.append(hidden)
 
         self.hidden_states = np.stack(hidden_states, axis=0)
-        # 不把 h0 当成输出
-        sequence_output = self.hidden_states[1:, :, 0]  # (T, H)
-        if self.return_sequences:
-            self.output = sequence_output
-        else:
-            self.output = sequence_output[-1]
-        
+        sequence_output = np.swapaxes(self.hidden_states[1:], 0, 1)  # (B, T, H)
+        output = sequence_output if self.return_sequences else self.hidden_states[-1]
+        self.output = output if self._batched_input else output[0]
         return self.output
 
     def backward(self, dout:np.ndarray):
         dout = np.asarray(dout)
-        sequence_length = self.inputs.shape[0]
+        if self.hidden_states is None:
+            raise RuntimeError("请先执行 forward，再执行 backward")
+
+        batch_size, sequence_length, _ = self.inputs.shape
 
         if self.return_sequences:
-            expected_shape = (sequence_length, self.hidden_size)
+            expected_shape = (
+                (batch_size, sequence_length, self.hidden_size)
+                if self._batched_input
+                else (sequence_length, self.hidden_size)
+            )
             if dout.shape != expected_shape:
                 raise ValueError(
                     f"dout形状应为{expected_shape}，实际为{dout.shape}"
                 )
-            direct_dh = dout
+            direct_dh = dout if self._batched_input else dout[None, ...]
         else:
-            expected_shape = (self.hidden_size,)
+            expected_shape = (
+                (batch_size, self.hidden_size)
+                if self._batched_input
+                else (self.hidden_size,)
+            )
             if dout.shape != expected_shape:
                 raise ValueError(
                     f"dout形状应为{expected_shape}，实际为{dout.shape}"
                 )
             direct_dh = np.zeros(
-                (sequence_length, self.hidden_size),
+                (batch_size, sequence_length, self.hidden_size),
                 dtype=np.result_type(dout.dtype, self.inputs.dtype),
             )
-            direct_dh[-1] = dout
+            direct_dh[:, -1, :] = dout if self._batched_input else dout[None, :]
 
         gradient_dtype = np.result_type(dout.dtype, self.inputs.dtype)
-        dh_next = np.zeros((self.hidden_size, 1), dtype=gradient_dtype)
+        dh_next = np.zeros((batch_size, self.hidden_size), dtype=gradient_dtype)
         d_inputs = np.zeros_like(self.inputs, dtype=gradient_dtype)
         for t in range(sequence_length - 1, -1, -1):
             h_t = self.hidden_states[t + 1]
             h_prev = self.hidden_states[t]
 
-            dh = direct_dh[t].reshape(self.hidden_size, 1) + dh_next
+            dh = direct_dh[:, t, :] + dh_next
+            active = self.mask[:, t, None]
+            dz = dh * (1.0 - h_t ** 2) * active
 
-            dz = dh * (1 - h_t ** 2)  # tanh的导数
+            self.dw_h += dz.T @ h_prev
+            self.dw_x += dz.T @ self.inputs[:, t, :]
+            self.db += np.sum(dz, axis=0).reshape(self.hidden_size, 1)
 
-            self.dw_h += dz @ h_prev.T
-            self.dw_x += dz @ self.inputs[t].reshape(1, self.input_size)
-            self.db += dz
+            # padding 时 h_t = h_prev，因此梯度沿恒等连接传回。
+            dh_next = dz @ self.w_h + dh * (~active)
+            d_inputs[:, t, :] = dz @ self.w_x
 
-            dh_next = self.w_h.T @ dz
-            d_inputs[t] = (self.w_x.T @ dz).reshape(-1)
-
-        self.dh_initial = dh_next.reshape(-1)
-        return d_inputs
+        self.dh_initial = dh_next if self._batched_input else dh_next[0]
+        return d_inputs if self._batched_input else d_inputs[0]
 
     def parameters(self):
         if not self.trainable:
