@@ -46,6 +46,50 @@ class Mul(Function):
 
         return grad_a, grad_b
 
+class Neg(Function):
+    @staticmethod
+    def forward(ctx:Context, a):
+        return -a
+
+    @staticmethod
+    def backward(ctx:Context, grad_output):
+        return (-grad_output if ctx.needs_input_grad[0] else None,)
+
+class Add(Function):
+    @staticmethod
+    def forward(ctx:Context, a, b):
+        return a + b
+
+    @staticmethod
+    def backward(ctx:Context, grad_output):
+        grad_a = grad_output if ctx.needs_input_grad[0] else None
+        grad_b = grad_output if ctx.needs_input_grad[1] else None
+
+        return grad_a, grad_b
+
+class Pow(Function):
+    @staticmethod
+    def forward(ctx:Context, a, b):
+        ctx.save_for_backward(a, b)
+        return a ** b
+
+    @staticmethod
+    def backward(ctx:Context, grad_out):
+        a, b = ctx.saved_values
+
+        grad_a = None
+        grad_b = None
+        if ctx.needs_input_grad[0]:
+            grad_a = (grad_out * b * (a ** (b - 1)))
+
+        if ctx.needs_input_grad[1]:
+            if a <= 0:
+                raise ValueError("requires positive base")
+
+            grad_b = (grad_out * (a ** b) * math.log(a))
+
+        return grad_a, grad_b
+
 class FunctionNode:
     def __init__(self, function:type[Function], ctx:Context, parents:tuple[Tensor, ...]):
         self.function = function
@@ -75,6 +119,36 @@ class Tensor:
 
     def __rmul__(self, other):
         return Mul.apply(other, self)
+
+    def __add__(self, other):
+        return Add.apply(self, other)
+
+    def __radd__(self, other):
+        return Add.apply(other, self)
+
+    def __neg__(self):
+        return Neg.apply(self)
+
+    def __sub__(self, other):
+        return self + (-Tensor._ensure_tensor(other))
+
+    def __rsub__(self, other):
+        return (Tensor._ensure_tensor(other) + (-self))
+
+    def __pow__(self, other):
+        return Pow.apply(self, other)
+
+    def __rpow__(self, other):
+        return Pow.apply(other, self)
+
+    # 除法
+    def __truediv__(self, other):
+        other = Tensor._ensure_tensor(other)
+        return self * (other ** -1)
+
+    def __rtruediv__(self, other):
+        other = Tensor._ensure_tensor(other)
+        return other * (self ** -1)
 
     def _build_topological_order(self):
         topo = []
