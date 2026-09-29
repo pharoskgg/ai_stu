@@ -1,14 +1,33 @@
 from __future__ import annotations
-import math
+import numpy as np
+
+def sum_to_shape(grad: np.ndarray, shape: tuple[int, ...]) -> np.ndarray:
+    """将广播结果的梯度求和回原输入形状。"""
+    grad = np.asarray(grad)
+
+    # 消除前向广播新增的前导维度
+    while grad.ndim > len(shape):
+        grad = grad.sum(axis=0)
+
+    # 原来长度为 1 的维度，在反向时求和
+    for axis, size in enumerate(shape):
+        if size == 1 and grad.shape[axis] != 1:
+            grad = grad.sum(axis=axis, keepdims=True)
+
+    return grad.reshape(shape)
+
 
 class Context:
     def __init__(self):
         self.saved_values = ()
 
         self.needs_input_grad = ()
-    
+
     def save_for_backward(self, *values):
-        self.saved_values = values
+
+        self.saved_values = tuple(
+            value.copy() if isinstance(value, np.ndarray) else value for value in values
+        )
 
 class Function:
     @classmethod
@@ -33,16 +52,19 @@ class Function:
 
 class Mul(Function):
     @staticmethod
-    def forward(ctx:Context, a:float, b:float):
+    def forward(ctx:Context, a, b):
         ctx.save_for_backward(a, b)
         return a * b
 
     @staticmethod
-    def backward(ctx:Context, grad_output:float):
+    def backward(ctx:Context, grad_output):
         a, b = ctx.saved_values
 
-        grad_a = grad_output * b if ctx.needs_input_grad[0] else None
-        grad_b = grad_output * a if ctx.needs_input_grad[1] else None
+        grad_a = (sum_to_shape(grad_output * b, a.shape)
+                 if ctx.needs_input_grad[0] else None)
+
+        grad_b = (sum_to_shape(grad_output * a, b.shape)
+                 if ctx.needs_input_grad[1] else None)
 
         return grad_a, grad_b
 
@@ -58,12 +80,17 @@ class Neg(Function):
 class Add(Function):
     @staticmethod
     def forward(ctx:Context, a, b):
+        ctx.save_for_backward(a, b)
         return a + b
 
     @staticmethod
     def backward(ctx:Context, grad_output):
-        grad_a = grad_output if ctx.needs_input_grad[0] else None
-        grad_b = grad_output if ctx.needs_input_grad[1] else None
+        a, b = ctx.saved_values
+        grad_a = (sum_to_shape(grad_output, a.shape)
+                 if ctx.needs_input_grad[0] else None)
+
+        grad_b = (sum_to_shape(grad_output, b.shape)
+                 if ctx.needs_input_grad[1] else None)
 
         return grad_a, grad_b
 
@@ -80,13 +107,36 @@ class Pow(Function):
         grad_a = None
         grad_b = None
         if ctx.needs_input_grad[0]:
-            grad_a = (grad_out * b * (a ** (b - 1)))
+            grad_a = sum_to_shape(grad_out * b * (a ** (b - 1)), a.shape)
 
         if ctx.needs_input_grad[1]:
-            if a <= 0:
-                raise ValueError("requires positive base")
+            if np.any(a <= 0):
+                raise ValueError("求指数梯度时，底数必须大于 0")
 
-            grad_b = (grad_out * (a ** b) * math.log(a))
+            grad_b = sum_to_shape((grad_out * (a ** b) * np.log(a)), b.shape)
+
+        return grad_a, grad_b
+
+class MatMul(Function):
+    @staticmethod
+    def forward(ctx:Context, a, b):
+        if a.ndim < 2 or b.ndim < 2:
+            raise ValueError("MatMul 当前要求两个输入至少为二维")
+        ctx.save_for_backward(a, b)
+        return np.matmul(a, b)
+
+    @staticmethod
+    def backward(ctx:Context, grad_output):
+        a, b = ctx.saved_values
+        grad_a = grad_b = None
+
+        if ctx.needs_input_grad[0]:
+            grad_a = np.matmul(grad_output, np.swapaxes(b, -1, -2))
+            grad_a = sum_to_shape(grad_a, a.shape)
+
+        if ctx.needs_input_grad[1]:
+            grad_b = np.matmul(np.swapaxes(a, -1, -2), grad_output)
+            grad_b = sum_to_shape(grad_b, b.shape)
 
         return grad_a, grad_b
 
@@ -96,16 +146,16 @@ class FunctionNode:
         self.ctx = ctx
         self.parents = parents
 
-    def backward(self, grad_output):
+    def backward(self, grad_output:np.ndarray):
         return self.function.backward(self.ctx, grad_output)
-    
+
 
 class Tensor:
-    def __init__(self, data:float, requires_grad:bool = False, grad_fn:FunctionNode = None):
-        self.data = data
+    def __init__(self, data, requires_grad:bool = False, grad_fn:FunctionNode | None = None):
+        self.data: np.ndarray = np.array(data, dtype=np.float64, copy=True)
         self.requires_grad = requires_grad
         self.grad_fn = grad_fn
-        self.grad = None
+        self.grad: np.ndarray | None = None
 
     @staticmethod
     def _ensure_tensor(value):
@@ -119,6 +169,12 @@ class Tensor:
 
     def __rmul__(self, other):
         return Mul.apply(other, self)
+
+    def __matmul__(self, other):
+        return MatMul.apply(self, other)
+
+    def __rmatmul__(self, other):
+        return MatMul.apply(other, self)
 
     def __add__(self, other):
         return Add.apply(self, other)
@@ -176,10 +232,14 @@ class Tensor:
                 "cannot call backward() on a tensor that does not require gradients"
             )
         if gradient is None:
-            gradient = 1.0
+            if self.data.size != 1:
+                raise RuntimeError("多元素输出调用 backward() 时需要提供 gradient")
+            gradient = np.ones_like(self.data)
+        else:
+            gradient = np.asarray(gradient, dtype=self.data.dtype)
+            if gradient.shape != self.data.shape:
+                raise ValueError(f"gradient 形状为 {gradient.shape}，输出形状为 {self.data.shape}")
 
-        gradient = float(gradient)
-        
         topo = self._build_topological_order()
 
         gradients = {id(self): gradient}
@@ -211,8 +271,8 @@ class Tensor:
                     f"{tensor.grad_fn.function.__name__}.backward returned "
                     f"{len(grad_inputs)} gradients, but expected "
                     f"{len(tensor.grad_fn.parents)}"
-    )
-            
+                )
+
             for parent, grad_input in zip(tensor.grad_fn.parents, grad_inputs):
                 # 可能有些tensor设置为不进行梯度计算，返回None
                 if grad_input is None:
@@ -228,6 +288,4 @@ class Tensor:
                     gradients[parent_id] = (grad_input)
                 else:
                     gradients[parent_id] += (grad_input)
-            
-        
 
