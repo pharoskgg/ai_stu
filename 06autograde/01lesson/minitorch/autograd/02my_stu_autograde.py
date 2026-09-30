@@ -206,6 +206,9 @@ class Tensor:
         other = Tensor._ensure_tensor(other)
         return other * (self ** -1)
 
+    def zero_grad(self):
+        self.grad = None
+
     def _build_topological_order(self):
         topo = []
         visited = set()
@@ -256,7 +259,7 @@ class Tensor:
             if tensor.grad_fn is None:
                 if tensor.requires_grad:
                     if tensor.grad is None:
-                        tensor.grad = grad_output
+                        tensor.grad = grad_output.copy()
                     else:
                         tensor.grad += grad_output
                 continue
@@ -281,11 +284,18 @@ class Tensor:
                 if not parent.requires_grad:
                     continue
 
+                # 检查 backward 是否返回了正确形状
+                if grad_input.shape != parent.data.shape:
+                    raise RuntimeError(
+                        f"{tensor.grad_fn.function.__name__}.backward 返回梯度形状 "
+                        f"{grad_input.shape}，但输入形状是 {parent.data.shape}"
+                    )
+
                 parent_id = id(parent)
 
                 # 临时累计梯度到父节点中
                 if parent_id not in gradients:
-                    gradients[parent_id] = (grad_input)
+                    gradients[parent_id] = (grad_input.copy())
                 else:
                     gradients[parent_id] += (grad_input)
 
