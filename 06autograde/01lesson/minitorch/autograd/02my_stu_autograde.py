@@ -209,6 +209,34 @@ class Tensor:
     def zero_grad(self):
         self.grad = None
 
+    def _build_topo_with_stack(self):
+        topo = []
+        visited = set()
+        stack = [(self, False)]
+
+        while stack:
+            tensor, expanded = stack.pop()
+
+            # 父节点处理完毕，此时加入拓扑
+            if expanded:
+                topo.append(tensor)
+                continue
+
+            if tensor in visited:
+                continue
+
+            visited.add(tensor)
+
+            # 栈先进后出: 先处理父节点，再处理当前节点
+            stack.append((tensor, True))
+
+            if tensor.grad_fn is not None:
+                for parent in reversed(tensor.grad_fn.parents):
+                    if parent not in visited:
+                        stack.append((parent, False))
+
+        return topo
+
     def _build_topological_order(self):
         topo = []
         visited = set()
@@ -243,7 +271,7 @@ class Tensor:
             if gradient.shape != self.data.shape:
                 raise ValueError(f"gradient 形状为 {gradient.shape}，输出形状为 {self.data.shape}")
 
-        topo = self._build_topological_order()
+        topo = self._build_topo_with_stack()
 
         gradients = {id(self): gradient}
 
