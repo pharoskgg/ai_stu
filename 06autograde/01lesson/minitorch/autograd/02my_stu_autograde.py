@@ -31,14 +31,15 @@ class Context:
 
 class Function:
     @classmethod
-    def apply(cls:type[Function], *args):
+    def apply(cls:type[Function], *args, **kwargs):
         tensors = tuple(Tensor._ensure_tensor(x) for x in args)
 
         ctx = Context()
         ctx.needs_input_grad = tuple(tensor.requires_grad for tensor in tensors)
 
         # 前向传播
-        data = cls.forward(ctx, *(tensor.data for tensor in tensors))
+        # axis、keepdims 等配置不作为计算图中的 Tensor 输入。
+        data = cls.forward(ctx, *(tensor.data for tensor in tensors), **kwargs)
 
         # 被算子创建的Tensor是否需要求梯度
         requires_grad = any(tensor.requires_grad for tensor in tensors)
@@ -107,7 +108,11 @@ class Pow(Function):
         grad_a = None
         grad_b = None
         if ctx.needs_input_grad[0]:
-            grad_a = sum_to_shape(grad_out * b * (a ** (b - 1)), a.shape)
+            # 指数为 0 时导数为 0；跳过幂运算，避免 0 * 0**(-1)。
+            local_grad = np.zeros(np.broadcast_shapes(a.shape, b.shape))
+            np.power(a, b - 1, out=local_grad, where=(b != 0))
+            local_grad *= b
+            grad_a = sum_to_shape(grad_out * local_grad, a.shape)
 
         if ctx.needs_input_grad[1]:
             if np.any(a <= 0):
@@ -116,6 +121,46 @@ class Pow(Function):
             grad_b = sum_to_shape((grad_out * (a ** b) * np.log(a)), b.shape)
 
         return grad_a, grad_b
+
+class Sum(Function):
+    @staticmethod
+    def _save_metadata(ctx:Context, a, axis, keepdims):
+        ctx.input_shape = a.shape
+        ctx.keepdims = keepdims
+        if axis is None:
+            ctx.axes = tuple(range(a.ndim))
+        elif a.ndim == 0:
+            # NumPy 允许标量使用 axis=0 或 axis=-1。
+            ctx.axes = ()
+        else:
+            axes = (axis,) if isinstance(axis, (int, np.integer)) else axis
+            ctx.axes = tuple(int(ax) % a.ndim for ax in axes)
+
+    @staticmethod
+    def forward(ctx:Context, a, *, axis=None, keepdims=False):
+        result = np.sum(a, axis=axis, keepdims=keepdims)
+        Sum._save_metadata(ctx, a, axis, keepdims)
+        return result
+
+    @staticmethod
+    def backward(ctx:Context, grad_output):
+        if not ctx.needs_input_grad[0]:
+            return (None,)
+        if not ctx.keepdims and ctx.axes:
+            grad_output = np.expand_dims(grad_output, axis=ctx.axes)
+        return (np.broadcast_to(grad_output, ctx.input_shape),)
+
+class Mean(Sum):
+    @staticmethod
+    def forward(ctx:Context, a, *, axis=None, keepdims=False):
+        result = np.mean(a, axis=axis, keepdims=keepdims)
+        Sum._save_metadata(ctx, a, axis, keepdims)
+        ctx.count = int(np.prod([a.shape[ax] for ax in ctx.axes]))
+        return result
+
+    @staticmethod
+    def backward(ctx:Context, grad_output):
+        return Sum.backward(ctx, grad_output / ctx.count)
 
 class MatMul(Function):
     @staticmethod
@@ -151,6 +196,9 @@ class FunctionNode:
 
 
 class Tensor:
+    # NumPy 混合运算时优先使用 Tensor 运算符，保留计算图。
+    __array_priority__ = 1000
+
     def __init__(self, data, requires_grad:bool = False, grad_fn:FunctionNode | None = None):
         self.data: np.ndarray = np.array(data, dtype=np.float64, copy=True)
         self.requires_grad = requires_grad
@@ -205,6 +253,12 @@ class Tensor:
     def __rtruediv__(self, other):
         other = Tensor._ensure_tensor(other)
         return other * (self ** -1)
+
+    def sum(self, dim=None, keepdim=False):
+        return Sum.apply(self, axis=dim, keepdims=keepdim)
+
+    def mean(self, dim=None, keepdim=False):
+        return Mean.apply(self, axis=dim, keepdims=keepdim)
 
     def zero_grad(self):
         self.grad = None
@@ -326,4 +380,3 @@ class Tensor:
                     gradients[parent_id] = (grad_input.copy())
                 else:
                     gradients[parent_id] += (grad_input)
-
