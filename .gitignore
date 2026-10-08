@@ -6,3 +6,6 @@
 *.pyc
 __pycache__/
 03deeplearning_cnn/data/
+
+# Local shared terminal MCP credentials
+/.shared-terminal/
