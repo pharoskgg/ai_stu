@@ -21,7 +21,7 @@ class Context:
 
 class Function:
     @classmethod
-    def apply(cls:type[Function], *args):
+    def apply(cls:type[Function], *args, **kwargs):
         # 延迟导入，避免 Tensor → 算子 → Function → Tensor 循环导入。
         from ..tensor import Tensor
 
@@ -31,7 +31,8 @@ class Function:
         ctx.needs_input_grad = tuple(tensor.requires_grad for tensor in tensors)
 
         # 前向传播
-        data = cls.forward(ctx, *(tensor.data for tensor in tensors))
+        # axis、keepdims 等配置不作为计算图中的 Tensor 输入。
+        data = cls.forward(ctx, *(tensor.data for tensor in tensors), **kwargs)
 
         # 被算子创建的Tensor是否需要求梯度
         requires_grad = any(tensor.requires_grad for tensor in tensors)

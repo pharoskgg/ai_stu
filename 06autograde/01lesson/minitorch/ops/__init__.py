@@ -2,5 +2,6 @@
 
 from .arithmetic import Add, Mul, Neg, Pow
 from .linalg import MatMul
+from .reductions import Sum, Mean
 
-__all__ = ["Add", "Mul", "Neg", "Pow", "MatMul"]
+__all__ = ["Add", "Mul", "Neg", "Pow", "MatMul", "Sum", "Mean"]

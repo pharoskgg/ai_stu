@@ -13,7 +13,8 @@ minitorch/
 ├── ops/
 │   ├── __init__.py            # 导出内置算子
 │   ├── arithmetic.py          # Mul、Neg、Add、Pow
-│   └── linalg.py              # MatMul
+│   ├── linalg.py              # MatMul
+│   └── reductions.py          # Sum、Mean
 └── autograd/
     ├── __init__.py            # 公开 backward、Context、Function
     ├── function.py            # Context 和 Function.apply：前向执行与建图
@@ -41,6 +42,8 @@ minitorch/
 
 `Function.apply` 内部延迟导入 Tensor，避免 `Tensor → 算子 → Function → Tensor` 的循环导入。`graph.py` 的类型依赖使用 `TYPE_CHECKING`。
 
+`Tensor.sum(dim=None, keepdim=False)` 和 `Tensor.mean(dim=None, keepdim=False)` 对应归约算子。`Function.apply` 将 `axis`、`keepdims` 等关键字配置传给前向计算，不将它们加入计算图输入。
+
 本次保留 `parents` 连接方式和 NumPy 实现；Node/Edge、AccumulateGrad 及数值后端拆分留到后续阶段。
 
 ## 使用与验证
@@ -62,10 +65,19 @@ PY
 
 也可以调用公开接口 `from minitorch.autograd import backward`，或继承 `Function` 添加自定义算子。
 
+可以使用归约算子组合均方误差损失：
+
+```python
+loss = ((prediction - target) ** 2).mean()
+loss.backward()
+```
+
+迁移保留原实现的边界行为：标量的默认 `mean()` 正常，但 `mean(dim=0)` 和 `mean(dim=-1)` 会由 NumPy 抛出轴错误。
+
 在仓库根目录运行测试，使用已安装 NumPy 的 Python：
 
 ```bash
 python -m unittest discover -s 06autograde/01lesson/tests -v
 ```
 
-测试覆盖广播、矩阵乘法、共享节点、梯度累加与清空、长计算链、错误检查以及包导入。
+测试覆盖广播、矩阵乘法、共享节点、梯度累加与清空、长计算链、错误检查、包导入，以及归约运算的维度、保留维度和反向梯度。

@@ -6,6 +6,7 @@ import numpy as np
 from .autograd.graph import FunctionNode
 from .ops.arithmetic import Add, Mul, Neg, Pow
 from .ops.linalg import MatMul
+from .ops.reductions import Sum, Mean
 
 
 class Tensor:
@@ -63,6 +64,14 @@ class Tensor:
     def __rtruediv__(self, other):
         other = Tensor._ensure_tensor(other)
         return other * (self ** -1)
+
+    def sum(self, dim=None, keepdim=False):
+        return Sum.apply(self, axis=dim, keepdims=keepdim)
+
+
+    def mean(self, dim=None, keepdim=False):
+        return Mean.apply(self, axis=dim, keepdims=keepdim)
+
 
     def zero_grad(self):
         self.grad = None
