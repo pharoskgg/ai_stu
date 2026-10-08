@@ -11,11 +11,12 @@ minitorch/
 ├── __init__.py               # 导出 Tensor、nn
 ├── tensor.py                 # 数据、梯度状态、运算符及 backward 入口
 ├── nn/
-│   ├── __init__.py            # 导出 Parameter、Module
+│   ├── __init__.py            # 导出 Parameter、Module、Linear
 │   ├── parameter.py           # 默认需要梯度的叶子 Tensor
 │   └── modules/
 │       ├── __init__.py
-│       └── module.py          # 调用入口、参数及子模块注册、递归管理
+│       ├── module.py          # 调用入口、参数及子模块注册、递归管理
+│       └── linear.py          # 全连接层，组合矩阵乘法和加法
 ├── ops/
 │   ├── __init__.py            # 导出内置算子
 │   ├── arithmetic.py          # Mul、Neg、Add、Pow
@@ -127,6 +128,38 @@ for name, parameter in model.named_parameters():
 ```
 
 示例通过数据数组更新参数；网络模块的反向传播由现有算子组合完成，无需单独定义 Module.backward。
+
+## Linear 全连接层
+
+`nn.Linear(in_features, out_features, bias=True)` 计算 `x @ weight + bias`。
+输入必须是至少二维的 Tensor，形状为 `(..., in_features)`；输出形状为
+`(..., out_features)`，保留所有批次维度。特征数必须是正整数。
+
+权重形状为 `(in_features, out_features)`，偏置形状为 `(out_features,)`。
+两者均在 `[-1 / sqrt(in_features), 1 / sqrt(in_features)]` 中均匀随机初始化，
+作为 Parameter 自动注册。设置 `bias=False` 时 `layer.bias` 为 None，
+参数遍历只返回权重。可在构造层之前用 `np.random.seed(...)` 固定随机种子。
+
+在 `06autograde/01lesson` 下运行：
+
+```python
+from minitorch import Tensor, nn
+
+layer = nn.Linear(2, 1)
+layer.weight.data[:] = [[1.0], [2.0]]
+layer.bias.data[:] = [0.5]
+x = Tensor([[1.0, 2.0], [3.0, 4.0]], requires_grad=True)
+
+y = layer(x)
+print(y.data)  # [[5.5], [11.5]]
+(y ** 2).mean().backward()
+print(layer.weight.grad)  # [[40.], [57.]]
+print(layer.bias.grad)    # [17.]
+print(x.grad)             # [[5.5, 11.], [11.5, 23.]]
+```
+
+前向传播使用现有 MatMul、Add 算子，输入、权重和偏置的梯度由 autograd
+自动计算；高维批次中的权重和偏置梯度会汇总到原参数形状。
 
 在仓库根目录运行测试，使用已安装 NumPy 的 Python：
 
