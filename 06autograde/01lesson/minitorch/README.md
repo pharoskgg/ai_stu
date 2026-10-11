@@ -11,12 +11,14 @@ minitorch/
 ├── __init__.py               # 导出 Tensor、nn、optim
 ├── tensor.py                 # 数据、梯度状态、运算符及 backward 入口
 ├── nn/
-│   ├── __init__.py            # 导出 Parameter、Module、Linear
+│   ├── __init__.py            # 导出 Parameter、Module、Linear、ReLU、functional
 │   ├── parameter.py           # 默认需要梯度的叶子 Tensor
+│   ├── functional.py          # 无参数网络函数，如 relu
 │   └── modules/
 │       ├── __init__.py
 │       ├── module.py          # 调用入口、参数及子模块注册、递归管理
-│       └── linear.py          # 全连接层，组合矩阵乘法和加法
+│       ├── linear.py          # 全连接层，组合矩阵乘法和加法
+│       └── activation.py      # ReLU 模块，调用 functional.relu
 ├── optim/
 │   ├── __init__.py            # 导出 Optimizer、SGD
 │   ├── optimizer.py           # 叶子参数管理、去重和梯度清空
@@ -25,7 +27,8 @@ minitorch/
 │   ├── __init__.py            # 导出内置算子
 │   ├── arithmetic.py          # Mul、Neg、Add、Pow
 │   ├── linalg.py              # MatMul
-│   └── reductions.py          # Sum、Mean
+│   ├── reductions.py          # Sum、Mean
+│   └── activation.py          # ReLU 前向及正值掩码反向
 └── autograd/
     ├── __init__.py            # 公开 backward、Context、Function
     ├── function.py            # Context 和 Function.apply：前向执行与建图
@@ -165,6 +168,46 @@ print(x.grad)             # [[5.5, 11.], [11.5, 23.]]
 前向传播使用现有 MatMul、Add 算子，输入、权重和偏置的梯度由 autograd
 自动计算；高维批次中的权重和偏置梯度会汇总到原参数形状。
 
+## ReLU 算子、函数与模块
+
+ReLU 分成三个接口，调用关系为
+`nn.ReLU.forward → nn.functional.relu → ops.ReLU.apply`。
+`ops.ReLU` 继承 Function，负责 NumPy 前向计算和局部反向公式；
+`nn.functional.relu(input)` 提供函数调用；`nn.ReLU()` 继承 Module，
+提供可注册为子模块的无参数激活层。
+
+前向逐元素计算 `max(input, 0)`，保留标量及任意批次形状，不修改输入。
+反向将上游梯度乘以前向保存的 `input > 0` 掩码，零点梯度取零。
+常量输入不建立计算图；共享路径的梯度由现有 engine 累加。
+当前接口不提供 inplace 参数或 Tensor.relu 方法。
+
+在 `06autograde/01lesson` 下可组合多层网络：
+
+```python
+from minitorch import Tensor, nn
+
+class MLP(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.hidden = nn.Linear(2, 4)
+        self.activation = nn.ReLU()
+        self.output = nn.Linear(4, 1)
+
+    def forward(self, x):
+        return self.output(self.activation(self.hidden(x)))
+
+model = MLP()
+x = Tensor([[1., -2.], [-1., 2.]], requires_grad=True)
+target = Tensor([[0.], [1.]])
+loss = ((model(x) - target) ** 2).mean()
+loss.backward()
+print(x.grad)
+print([name for name, _ in model.named_parameters()])
+# ['hidden.weight', 'hidden.bias', 'output.weight', 'output.bias']
+
+print(nn.functional.relu(Tensor([-2., 0., 3.])).data)  # [0., 0., 3.]
+```
+
 ## Optimizer 与 SGD 训练
 
 通过 `from minitorch import optim` 使用优化器。
@@ -219,4 +262,4 @@ print("bias:", model.bias.data)                # 约为 [0.5]
 python -m unittest discover -s 06autograde/01lesson/tests -v
 ```
 
-测试覆盖广播、矩阵乘法、共享节点、梯度累加与清空、长计算链、错误检查、包导入、归约运算，以及网络参数注册、共享对象去重、模式切换、完整前向反向计算、优化器原地更新和线性回归收敛。
+测试覆盖广播、矩阵乘法、共享节点、梯度累加与清空、长计算链、错误检查、包导入、归约运算，以及网络参数注册、共享对象去重、模式切换、完整前向反向计算、ReLU 零点梯度和多层网络梯度、优化器原地更新和线性回归收敛。
