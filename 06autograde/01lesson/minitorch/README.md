@@ -8,7 +8,7 @@
 
 ```text
 minitorch/
-├── __init__.py               # 导出 Tensor、nn
+├── __init__.py               # 导出 Tensor、nn、optim
 ├── tensor.py                 # 数据、梯度状态、运算符及 backward 入口
 ├── nn/
 │   ├── __init__.py            # 导出 Parameter、Module、Linear
@@ -17,6 +17,10 @@ minitorch/
 │       ├── __init__.py
 │       ├── module.py          # 调用入口、参数及子模块注册、递归管理
 │       └── linear.py          # 全连接层，组合矩阵乘法和加法
+├── optim/
+│   ├── __init__.py            # 导出 Optimizer、SGD
+│   ├── optimizer.py           # 叶子参数管理、去重和梯度清空
+│   └── sgd.py                 # 普通梯度下降，原地更新数据
 ├── ops/
 │   ├── __init__.py            # 导出内置算子
 │   ├── arithmetic.py          # Mul、Neg、Add、Pow
@@ -161,10 +165,58 @@ print(x.grad)             # [[5.5, 11.], [11.5, 23.]]
 前向传播使用现有 MatMul、Add 算子，输入、权重和偏置的梯度由 autograd
 自动计算；高维批次中的权重和偏置梯度会汇总到原参数形状。
 
+## Optimizer 与 SGD 训练
+
+通过 `from minitorch import optim` 使用优化器。
+`optim.Optimizer(params)` 在构造时保存有序叶子 Tensor 引用，接受
+`model.parameters()` 这样的生成器，按对象身份去重；空参数、非 Tensor
+和带有 `grad_fn` 的非叶子 Tensor 会被拒绝。基类的 `step()` 抛出
+`NotImplementedError`，具体更新规则由子类实现。
+
+`optim.SGD(params, lr=0.01)` 执行普通梯度下降
+`parameter.data -= lr * parameter.grad`。学习率必须是有限非负实数，
+允许零，拒绝布尔值。更新在原 NumPy 数据数组上完成，保留参数对象和
+数据数组身份；共享参数只更新一次。`grad is None` 的参数会跳过，
+已有梯度会参与更新，即使参数的 `requires_grad=False`。
+
+`optimizer.zero_grad()` 默认将梯度设为 None；
+`optimizer.zero_grad(set_to_none=False)` 将已有梯度数组原地置零，
+保留数组身份，也不会为 None 梯度分配数组。
+`step()` 不清除梯度，因此每轮训练先清空梯度，再前向、反向并更新。
+
+在 `06autograde/01lesson` 下可运行完整线性回归训练：
+
+```python
+import numpy as np
+from minitorch import Tensor, nn, optim
+
+np.random.seed(7)
+rng = np.random.default_rng(7)
+inputs = rng.normal(size=(64, 2))
+x = Tensor(inputs)
+target = Tensor(inputs @ np.array([[2.0], [-3.0]]) + 0.5)
+
+model = nn.Linear(2, 1)
+optimizer = optim.SGD(model.parameters(), lr=0.1)
+initial_loss = float(((model(x) - target) ** 2).mean().data)
+
+for _ in range(150):
+    optimizer.zero_grad()
+    prediction = model(x)
+    loss = ((prediction - target) ** 2).mean()
+    loss.backward()
+    optimizer.step()
+
+final_loss = float(((model(x) - target) ** 2).mean().data)
+print("loss:", initial_loss, "->", final_loss)  # 最终损失小于 1e-8
+print("weight:", model.weight.data)            # 约为 [[2.], [-3.]]
+print("bias:", model.bias.data)                # 约为 [0.5]
+```
+
 在仓库根目录运行测试，使用已安装 NumPy 的 Python：
 
 ```bash
 python -m unittest discover -s 06autograde/01lesson/tests -v
 ```
 
-测试覆盖广播、矩阵乘法、共享节点、梯度累加与清空、长计算链、错误检查、包导入、归约运算，以及网络参数注册、共享对象去重、模式切换和完整前向反向计算。
+测试覆盖广播、矩阵乘法、共享节点、梯度累加与清空、长计算链、错误检查、包导入、归约运算，以及网络参数注册、共享对象去重、模式切换、完整前向反向计算、优化器原地更新和线性回归收敛。
