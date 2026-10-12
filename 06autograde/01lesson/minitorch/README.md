@@ -11,14 +11,15 @@ minitorch/
 ├── __init__.py               # 导出 Tensor、nn、optim
 ├── tensor.py                 # 数据、梯度状态、运算符及 backward 入口
 ├── nn/
-│   ├── __init__.py            # 导出 Parameter、Module、Linear、ReLU、functional
+│   ├── __init__.py            # 导出 Parameter、Module、Linear、ReLU、Sequential、functional
 │   ├── parameter.py           # 默认需要梯度的叶子 Tensor
 │   ├── functional.py          # 无参数网络函数，如 relu
 │   └── modules/
 │       ├── __init__.py
 │       ├── module.py          # 调用入口、参数及子模块注册、递归管理
 │       ├── linear.py          # 全连接层，组合矩阵乘法和加法
-│       └── activation.py      # ReLU 模块，调用 functional.relu
+│       ├── activation.py      # ReLU 模块，调用 functional.relu
+│       └── container.py       # Sequential，按注册顺序串联模块
 ├── optim/
 │   ├── __init__.py            # 导出 Optimizer、SGD
 │   ├── optimizer.py           # 叶子参数管理、去重和梯度清空
@@ -256,10 +257,68 @@ print("weight:", model.weight.data)            # 约为 [[2.], [-3.]]
 print("bias:", model.bias.data)                # 约为 [0.5]
 ```
 
+## Sequential 顺序网络容器
+
+`nn.Sequential(*modules)` 按注册顺序将前一层的输出交给下一层。
+位置参数会注册为 `"0"`、`"1"` 等名称；也可传入单个
+`collections.OrderedDict` 指定名称和顺序。所有元素必须是 Module，
+包括 None 在内的非法元素都会被拒绝；名称沿用 Module 的注册校验。
+空容器直接返回输入对象。
+
+容器支持 `len(model)`、`for layer in model` 和整数正负索引
+`model[0]`、`model[-1]`。越界抛出 IndexError，非整数（含布尔值）
+抛出 TypeError；当前不提供切片、增删索引、append 或 ModuleList。
+共享模块在每个注册位置都会执行，递归参数遍历和优化器则默认去重。
+参数名称包含容器路径；train、eval 和 zero_grad 沿用 Module 的递归管理。
+
+```python
+from collections import OrderedDict
+from minitorch import nn
+
+model = nn.Sequential(OrderedDict([
+    ("hidden", nn.Linear(2, 8)),
+    ("activation", nn.ReLU()),
+    ("output", nn.Linear(8, 1)),
+]))
+print(len(model))                      # 3
+print(model[0] is model.hidden)        # True
+print(model[-1] is model.output)       # True
+print([name for name, _ in model.named_parameters()])
+# ['hidden.weight', 'hidden.bias', 'output.weight', 'output.bias']
+model.eval()
+model.train()
+```
+
+在 `06autograde/01lesson` 下运行完整多层网络训练：
+
+```python
+import numpy as np
+from minitorch import Tensor, nn, optim
+
+np.random.seed(7)
+inputs = np.random.default_rng(7).normal(size=(64, 2))
+x = Tensor(inputs)
+target = Tensor((1.5 * np.maximum(inputs[:, 0], 0)
+                 - 0.7 * np.maximum(-inputs[:, 1], 0) + 0.2)[:, None])
+model = nn.Sequential(nn.Linear(2, 8), nn.ReLU(), nn.Linear(8, 1))
+optimizer = optim.SGD(model.parameters(), lr=0.05)
+initial_loss = float(((model(x) - target) ** 2).mean().data)
+
+for _ in range(300):
+    optimizer.zero_grad()
+    loss = ((model(x) - target) ** 2).mean()
+    loss.backward()
+    optimizer.step()
+
+final_loss = float(((model(x) - target) ** 2).mean().data)
+print("loss:", initial_loss, "->", final_loss)
+# 最终损失低于初始损失的 5%，两个 Linear 的参数都收到有限梯度。
+```
+
 在仓库根目录运行测试，使用已安装 NumPy 的 Python：
 
 ```bash
 python -m unittest discover -s 06autograde/01lesson/tests -v
 ```
 
-测试覆盖广播、矩阵乘法、共享节点、梯度累加与清空、长计算链、错误检查、包导入、归约运算，以及网络参数注册、共享对象去重、模式切换、完整前向反向计算、ReLU 零点梯度和多层网络梯度、优化器原地更新和线性回归收敛。
+测试覆盖广播、矩阵乘法、共享节点、梯度累加与清空、长计算链、错误检查、包导入、归约运算，以及网络参数注册、共享对象去重、模式切换、完整前向反向计算、ReLU 零点梯度和多层网络梯度、优化器原地更新和线性回归收敛、Sequential 有序执行及多层网络训练收敛。

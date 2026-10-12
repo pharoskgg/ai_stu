@@ -1,6 +1,7 @@
 """优化器的参数更新、梯度清空和完整训练行为。"""
 
 from pathlib import Path
+from fractions import Fraction
 import sys
 import unittest
 
@@ -138,6 +139,15 @@ class OptimizerTests(unittest.TestCase):
         parameter.grad = np.array([2.0])
         optim.SGD([parameter], lr=np.float64(0.1)).step()
         np.testing.assert_allclose(parameter.data, [0.8])
+
+    def test_fraction_learning_rate_updates_float64_data(self):
+        parameter = Tensor([1.0, 2.0])
+        parameter.grad = np.array([2.0, -4.0])
+        data = parameter.data
+        optim.SGD([parameter], lr=Fraction(1, 10)).step()
+        np.testing.assert_allclose(parameter.data, [0.8, 2.4])
+        self.assertIs(parameter.data, data)
+        self.assertEqual(parameter.data.dtype, np.dtype(np.float64))
 
     def test_linear_regression_converges(self):
         rng = np.random.default_rng(7)

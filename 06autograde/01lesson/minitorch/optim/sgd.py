@@ -13,7 +13,7 @@ class SGD(Optimizer):
         if not math.isfinite(lr) or lr < 0:
             raise ValueError("learning rate must be finite and non-negative")
         super().__init__(params)
-        self.lr = lr
+        self.lr = float(lr)
 
     def step(self):
         for parameter in self.params:

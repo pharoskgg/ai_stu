@@ -1,6 +1,6 @@
 # MiniTorch 训练接口实施计划
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** 按顺序实现最小优化器、ReLU 和 Sequential，每一步独立验证、提交并推送。
 
@@ -32,11 +32,11 @@
 
 **Interfaces:** Optimizer(params) 保存有序 Tensor 叶子引用；zero_grad(set_to_none=True)；step() 基类抛 NotImplementedError。SGD(params, lr=0.01) 实现普通梯度下降。公开 from minitorch import optim。
 
-- [ ] 编写失败测试：参数 [1,2] 梯度 [2,-4]、lr=0.1 后得到 [0.8,2.4]；生成器连续两步更新；None 跳过；零梯度；step 不清梯度；zero_grad 两种模式及数组身份；参数身份不变；共享引用仅更新一次；拒绝空参数、非 Tensor、非叶子；lr 拒绝 bool、非实数、负值及非有限值，允许零。
-- [ ] 运行新测试确认缺少 optim 而失败。
-- [ ] 实现：构造时按对象身份去重并物化参数；按 grad 是否为 None 决定更新（不要以 requires_grad 额外过滤已有梯度）；通过 NumPy 数组原地减法更新；不支持额外优化器选项。
-- [ ] 添加固定随机种子线性回归收敛测试及 README 完整训练示例；全套 unittest 和 git diff --check 通过。
-- [ ] 主代理独立审查、提交并推送。提交信息两句：实现优化器基类和随机梯度下降，支持参数更新与梯度清空。补充优化器行为测试和线性回归训练示例。
+- [x] 编写失败测试：参数 [1,2] 梯度 [2,-4]、lr=0.1 后得到 [0.8,2.4]；生成器连续两步更新；None 跳过；零梯度；step 不清梯度；zero_grad 两种模式及数组身份；参数身份不变；共享引用仅更新一次；拒绝空参数、非 Tensor、非叶子；lr 拒绝 bool、非实数、负值及非有限值，允许零。
+- [x] 运行新测试确认缺少 optim 而失败。
+- [x] 实现：构造时按对象身份去重并物化参数；按 grad 是否为 None 决定更新（不要以 requires_grad 额外过滤已有梯度）；通过 NumPy 数组原地减法更新；不支持额外优化器选项。
+- [x] 添加固定随机种子线性回归收敛测试及 README 完整训练示例；全套 unittest 和 git diff --check 通过。
+- [x] 主代理独立审查、提交并推送。提交信息两句：实现优化器基类和随机梯度下降，支持参数更新与梯度清空。补充优化器行为测试和线性回归训练示例。
 
 ### Task 2: ReLU 算子与网络接口
 
@@ -44,11 +44,11 @@
 
 **Interfaces:** ops.ReLU(Function)；nn.functional.relu(input: Tensor) -> Tensor；nn.ReLU(Module).forward(input) -> Tensor。沿用 Function.apply，模块调用 functional，functional 调用算子。无 inplace 参数；本阶段无需 Tensor.relu。
 
-- [ ] 编写失败测试：输入 [-2,0,3] 前向 [0,0,3]，上游 [2,3,4] 梯度 [0,0,4]；标量与批次形状；输入不被修改；常量不建图；共享 ReLU 路径梯度累加；Module 无参数；functional 和 Module 数值一致。
-- [ ] 运行新测试确认缺失接口而失败。
-- [ ] 实现 np.maximum 与保存前向正值掩码，backward 为上游梯度乘掩码；在零点取零。
-- [ ] 补充 Linear → ReLU → Linear 集成反向测试及 README 分层说明；全套 unittest 和 git diff --check 通过。
-- [ ] 主代理独立审查、提交并推送。提交信息两句：实现分层的线性整流算子、函数接口和网络模块。补充前向反向传播测试及多层网络用法。
+- [x] 编写失败测试：输入 [-2,0,3] 前向 [0,0,3]，上游 [2,3,4] 梯度 [0,0,4]；标量与批次形状；输入不被修改；常量不建图；共享 ReLU 路径梯度累加；Module 无参数；functional 和 Module 数值一致。
+- [x] 运行新测试确认缺失接口而失败。
+- [x] 实现 np.maximum 与保存前向正值掩码，backward 为上游梯度乘掩码；在零点取零。
+- [x] 补充 Linear → ReLU → Linear 集成反向测试及 README 分层说明；全套 unittest 和 git diff --check 通过。
+- [x] 主代理独立审查、提交并推送。提交信息两句：实现分层的线性整流算子、函数接口和网络模块。补充前向反向传播测试及多层网络用法。
 
 ### Task 3: Sequential 网络容器
 
@@ -56,8 +56,16 @@
 
 **Interfaces:** nn.Sequential(*modules)，支持位置 Module 及单个 collections.OrderedDict 命名模块；forward(input) 按注册顺序串联；支持 len、迭代、整数索引（含负数）。本阶段不实现切片、增删索引、append、ModuleList。
 
-- [ ] 编写失败测试：位置层命名为 "0"/"1"；OrderedDict 保持名称和顺序；空容器返回输入本身；非法元素（含 None）拒绝；整数正负索引及越界；非整数索引拒绝；递归参数命名、共享模块重复执行但参数去重、train/eval/zero_grad 传播。
-- [ ] 运行新测试确认缺少 Sequential 而失败。
-- [ ] 实现复用 add_module 与 _modules 的有序值；forward 必须遍历全部注册位置而非会去重的 children()；不单独保存第二份层列表。
-- [ ] 添加 Sequential(Linear, ReLU, Linear) + SGD 的固定数据训练测试（固定随机种子，损失明显下降，各层收到有限梯度）；README 完整用法；全套 unittest 和 git diff --check 通过。
-- [ ] 主代理完成独立任务审查及整体审查、提交并推送。提交信息两句：实现顺序网络容器，复用模块注册和递归参数管理。补充容器行为测试及多层网络训练示例。
+- [x] 编写失败测试：位置层命名为 "0"/"1"；OrderedDict 保持名称和顺序；空容器返回输入本身；非法元素（含 None）拒绝；整数正负索引及越界；非整数索引拒绝；递归参数命名、共享模块重复执行但参数去重、train/eval/zero_grad 传播。
+- [x] 运行新测试确认缺少 Sequential 而失败。
+- [x] 实现复用 add_module 与 _modules 的有序值；forward 必须遍历全部注册位置而非会去重的 children()；不单独保存第二份层列表。
+- [x] 添加 Sequential(Linear, ReLU, Linear) + SGD 的固定数据训练测试（固定随机种子，损失明显下降，各层收到有限梯度）；README 完整用法；全套 unittest 和 git diff --check 通过。
+- [x] 主代理完成独立任务审查及整体审查、提交并推送。提交信息两句：实现顺序网络容器，复用模块注册和递归参数管理。补充容器行为测试及多层网络训练示例。
+
+## 验证记录
+
+- 第 1 点：77 项测试通过，独立审查通过，提交 0e74d2a 已推送。
+- 第 2 点：87 项测试通过，独立审查通过，提交 038c82b 已推送。
+- 第 3 点：容器独立审查通过；训练示例损失从 0.567769 降至 0.003226。
+- 整体审查发现接受 Fraction 学习率后 NumPy 更新失败；已将合法学习率转换为 float，并补充先失败后通过的回归测试。该修复随第三点提交，保留已推送历史。
+- 最终全套 102 项测试通过，差异空白检查通过，整体复审通过，原始学习文件未修改。
