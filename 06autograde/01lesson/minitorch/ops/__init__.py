@@ -4,5 +4,6 @@ from .arithmetic import Add, Mul, Neg, Pow
 from .linalg import MatMul
 from .reductions import Sum, Mean
 from .activation import ReLU
+from .shape import Reshape, Transpose
 
-__all__ = ["Add", "Mul", "Neg", "Pow", "MatMul", "Sum", "Mean", "ReLU"]
+__all__ = ["Add", "Mul", "Neg", "Pow", "MatMul", "Sum", "Mean", "ReLU", "Reshape", "Transpose"]

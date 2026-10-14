@@ -29,6 +29,7 @@ minitorch/
 │   ├── arithmetic.py          # Mul、Neg、Add、Pow
 │   ├── linalg.py              # MatMul
 │   ├── reductions.py          # Sum、Mean
+│   ├── shape.py               # Reshape、Transpose 及维度校验
 │   └── activation.py          # ReLU 前向及正值掩码反向
 └── autograd/
     ├── __init__.py            # 公开 backward、Context、Function
@@ -88,6 +89,44 @@ loss.backward()
 ```
 
 迁移保留原实现的边界行为：标量的默认 `mean()` 正常，但 `mean(dim=0)` 和 `mean(dim=-1)` 会由 NumPy 抛出轴错误。
+
+## Tensor 形状查询与变换
+
+形状接口参考 PyTorch 的 [Tensor.size](https://docs.pytorch.org/docs/stable/generated/torch.Tensor.size.html)、
+[Tensor.reshape](https://docs.pytorch.org/docs/stable/generated/torch.Tensor.reshape.html)
+和 [transpose](https://docs.pytorch.org/docs/stable/generated/torch.transpose.html)。
+
+- `x.shape`、`x.size()` 返回形状元组；`x.ndim` 返回维度数量；`x.numel()` 返回元素总数。
+- `x.size(dim)` 返回指定维度的长度，支持负维度；标量没有可查询的维度，`size(0)` 也会报错。
+- `x.reshape(2, 3)`、`x.reshape((2, 3))`、`x.reshape([2, 3])` 改变形状，保持元素顺序和总数；允许一个 `-1` 自动推导。`reshape(())` 将单元素 Tensor 转为标量，空 Tensor 可变为元素数仍为零的形状。
+- `x.transpose(dim0, dim1)` 仅交换两个维度，支持负维度；同一维度交换保持形状。标量允许 `0` 和 `-1`，结果仍为标量。
+
+维度参数必须是整数（可使用 NumPy 整数，不接受布尔值），类型错误抛出
+`TypeError`，维度越界抛出 `IndexError`。reshape 的元素数不匹配、多个 `-1`、
+小于 `-1` 的维度或空 Tensor 的 `reshape(0, -1)` 等无法确定形状的情况抛出
+`RuntimeError`。
+
+调用关系为 `Tensor.reshape/transpose → ops.Reshape/Transpose.apply`。
+形状与维度通过关键字配置传入算子，不作为计算图的父 Tensor。
+反向时 reshape 恢复输入形状，transpose 再交换同一对维度；共享路径与重复
+backward 的梯度累加仍由 engine 处理。常量输入不建图。
+
+```python
+from minitorch import Tensor
+
+x = Tensor([[1., 2., 3.], [4., 5., 6.]], requires_grad=True)
+print(x.shape, x.ndim, x.size(-1), x.numel())  # (2, 3) 2 3 6
+y = x.transpose(0, 1).reshape(-1)
+print(y.data)  # [1. 4. 2. 5. 3. 6.]
+(y * Tensor([1., 2., 3., 4., 5., 6.])).sum().backward()
+print(x.grad)  # [[1. 3. 5.], [2. 4. 6.]]
+```
+
+当前与 PyTorch 的差异：`shape` 和 `size()` 返回普通 tuple，而非 `torch.Size`；
+所有结果沿用现有 Tensor 构造时复制 NumPy 数据的行为，修改结果 `.data` 不会
+修改输入，因此 transpose 尚不提供 PyTorch 的共享存储视图语义。暂不提供
+`view`、`permute`、`squeeze`、`unsqueeze` 或顶层形状函数；矩阵乘法和 Linear
+仍沿用原来的维度要求。
 
 ## Parameter 与 Module
 

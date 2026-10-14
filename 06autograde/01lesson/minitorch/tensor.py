@@ -7,6 +7,7 @@ from .autograd.graph import FunctionNode
 from .ops.arithmetic import Add, Mul, Neg, Pow
 from .ops.linalg import MatMul
 from .ops.reductions import Sum, Mean
+from .ops.shape import Reshape, Transpose, _normalize_dim
 
 
 class Tensor:
@@ -15,6 +16,38 @@ class Tensor:
         self.requires_grad = requires_grad
         self.grad_fn = grad_fn
         self.grad: np.ndarray | None = None
+
+    @property
+    def shape(self):
+        """返回形状元组。"""
+        return self.data.shape
+
+    @property
+    def ndim(self):
+        """返回维度数量，标量为零维。"""
+        return self.data.ndim
+
+    def size(self, dim=None):
+        """返回完整形状或指定维度的长度，支持负维度。"""
+        if dim is None:
+            return self.shape
+        return self.shape[_normalize_dim(dim, self.ndim)]
+
+    def numel(self):
+        """返回元素总数。"""
+        return self.data.size
+
+    def reshape(self, *shape):
+        """改变形状，接受多个整数或一个元组/列表，允许一个 -1。"""
+        if not shape:
+            raise TypeError("reshape 至少需要一个形状参数；标量使用 reshape(())")
+        if len(shape) == 1 and isinstance(shape[0], (tuple, list)):
+            shape = shape[0]
+        return Reshape.apply(self, shape=shape)
+
+    def transpose(self, dim0, dim1):
+        """交换两个维度，反向传播时将梯度交换回原维度。"""
+        return Transpose.apply(self, dim0=dim0, dim1=dim1)
 
     @staticmethod
     def _ensure_tensor(value):
