@@ -60,3 +60,49 @@ class Transpose(Function):
         if ctx.is_scalar:
             return (grad_output,)
         return (np.swapaxes(grad_output, ctx.dim0, ctx.dim1),)
+
+
+class Select(Function):
+    """沿一个维度选取一个位置，反向将梯度写回对应切片。"""
+
+    @staticmethod
+    def forward(ctx: Context, a, *, dim, index):
+        ctx.dim = _normalize_dim(dim, a.ndim)
+        if isinstance(index, bool) or not isinstance(index, Integral):
+            raise TypeError("index 必须是整数")
+        size = a.shape[ctx.dim]
+        if not -size <= index < size:
+            raise IndexError(f"index {index} 超出长度 {size} 的范围")
+        ctx.index = int(index) % size
+        ctx.input_shape = a.shape
+        return np.take(a, ctx.index, axis=ctx.dim)
+
+    @staticmethod
+    def backward(ctx: Context, grad_output):
+        if not ctx.needs_input_grad[0]:
+            return (None,)
+        grad_input = np.zeros(ctx.input_shape, dtype=grad_output.dtype)
+        slices = [slice(None)] * len(ctx.input_shape)
+        slices[ctx.dim] = ctx.index
+        grad_input[tuple(slices)] = grad_output
+        return (grad_input,)
+
+
+class Stack(Function):
+    """沿新增维度堆叠输入，反向按相同维度拆分梯度。"""
+
+    @staticmethod
+    def forward(ctx: Context, *inputs, dim=0):
+        if not inputs:
+            raise ValueError("stack 至少需要一个 Tensor")
+        ctx.dim = _normalize_dim(dim, inputs[0].ndim + 1)
+        if any(a.shape != inputs[0].shape for a in inputs):
+            raise ValueError("stack 的所有输入形状必须一致")
+        return np.stack(inputs, axis=ctx.dim)
+
+    @staticmethod
+    def backward(ctx: Context, grad_output):
+        return tuple(
+            np.take(grad_output, index, axis=ctx.dim) if needs_grad else None
+            for index, needs_grad in enumerate(ctx.needs_input_grad)
+        )

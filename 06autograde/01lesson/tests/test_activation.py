@@ -105,5 +105,35 @@ class ReLUTests(unittest.TestCase):
         np.testing.assert_array_equal(second.bias.grad, [2.])
 
 
+class TanhTests(unittest.TestCase):
+    def test_module_export_values_and_gradients(self):
+        self.assertTrue(hasattr(nn, "Tanh"), "缺少 nn.Tanh")
+        x = Tensor([[-1., 0., 1.]], requires_grad=True)
+        y = nn.Tanh()(x)
+        np.testing.assert_allclose(y.data, [[-0.7615941559557649, 0., 0.7615941559557649]])
+        y.backward([[2., 3., 4.]])
+        np.testing.assert_allclose(x.grad, [[0.8399486832280523, 3., 1.6798973664561045]])
+
+    def test_large_values_remain_finite_and_constants_skip_graph(self):
+        x = Tensor([-1000., 1000.], requires_grad=True)
+        with np.errstate(over="raise", invalid="raise"):
+            y = nn.functional.tanh(x)
+            y.sum().backward()
+        np.testing.assert_array_equal(y.data, [-1., 1.])
+        np.testing.assert_array_equal(x.grad, [0., 0.])
+        y = nn.functional.tanh(Tensor(0.))
+        self.assertEqual(y.shape, ())
+        self.assertFalse(y.requires_grad)
+        self.assertIsNone(y.grad_fn)
+
+    def test_backward_uses_saved_values_after_mutation(self):
+        x = Tensor([0., 1.], requires_grad=True)
+        y = nn.functional.tanh(x)
+        x.data[:] = 100.
+        y.data[:] = 100.
+        y.sum().backward()
+        np.testing.assert_allclose(x.grad, [1., 0.41997434161402614])
+
+
 if __name__ == "__main__":
     unittest.main()

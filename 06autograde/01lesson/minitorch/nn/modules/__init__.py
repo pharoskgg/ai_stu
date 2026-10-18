@@ -2,7 +2,8 @@
 
 from .module import Module
 from .linear import Linear
-from .activation import ReLU
+from .activation import ReLU, Tanh
 from .container import Sequential
+from .rnn import RNN
 
-__all__ = ["Module", "Linear", "ReLU", "Sequential"]
+__all__ = ["Module", "Linear", "ReLU", "Tanh", "Sequential", "RNN"]

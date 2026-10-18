@@ -11,14 +11,15 @@ minitorch/
 ├── __init__.py               # 导出 Tensor、nn、optim
 ├── tensor.py                 # 数据、梯度状态、运算符及 backward 入口
 ├── nn/
-│   ├── __init__.py            # 导出 Parameter、Module、Linear、ReLU、Sequential、functional
+│   ├── __init__.py            # 导出 Parameter、Module、Linear、ReLU、Tanh、Sequential、RNN、functional
 │   ├── parameter.py           # 默认需要梯度的叶子 Tensor
 │   ├── functional.py          # 无参数网络函数，如 relu
 │   └── modules/
 │       ├── __init__.py
 │       ├── module.py          # 调用入口、参数及子模块注册、递归管理
 │       ├── linear.py          # 全连接层，组合矩阵乘法和加法
-│       ├── activation.py      # ReLU 模块，调用 functional.relu
+│       ├── activation.py      # ReLU、Tanh 模块，调用 functional
+│       ├── rnn.py             # 单层单向 RNN，返回序列输出和最终状态
 │       └── container.py       # Sequential，按注册顺序串联模块
 ├── optim/
 │   ├── __init__.py            # 导出 Optimizer、SGD
@@ -29,8 +30,8 @@ minitorch/
 │   ├── arithmetic.py          # Mul、Neg、Add、Pow
 │   ├── linalg.py              # MatMul
 │   ├── reductions.py          # Sum、Mean
-│   ├── shape.py               # Reshape、Transpose 及维度校验
-│   └── activation.py          # ReLU 前向及正值掩码反向
+│   ├── shape.py               # Reshape、Transpose、Select、Stack 及维度校验
+│   └── activation.py          # ReLU、Tanh 前向及局部反向
 └── autograd/
     ├── __init__.py            # 公开 backward、Context、Function
     ├── function.py            # Context 和 Function.apply：前向执行与建图
@@ -361,3 +362,46 @@ python -m unittest discover -s 06autograde/01lesson/tests -v
 ```
 
 测试覆盖广播、矩阵乘法、共享节点、梯度累加与清空、长计算链、错误检查、包导入、归约运算，以及网络参数注册、共享对象去重、模式切换、完整前向反向计算、ReLU 零点梯度和多层网络梯度、优化器原地更新和线性回归收敛、Sequential 有序执行及多层网络训练收敛。
+
+## Tanh 与单层 RNN
+
+`nn.Tanh()` 调用 `nn.functional.tanh(input)`，再由 `ops.Tanh` 执行 NumPy
+前向和局部反向。反向使用前向保存的结果计算 `grad_output * (1 - output**2)`。
+
+`nn.RNN(input_size, hidden_size, num_layers=1, nonlinearity="tanh", bias=True,
+batch_first=False)` 对齐 PyTorch 的单层单向基本接口：
+
+- 默认输入为 `(seq_len, batch, input_size)`；`batch_first=True` 时为
+  `(batch, seq_len, input_size)`。无批次输入为 `(seq_len, input_size)`，此时忽略 `batch_first`。
+- 调用 `output, h_n = model(input, hx=None)`。`output` 包含每个时间步的隐藏状态，
+  维度顺序与输入一致，最后一维为 `hidden_size`。
+- 有批次时，`hx` 和 `h_n` 均为 `(1, batch, hidden_size)`；无批次时均为
+  `(1, hidden_size)`。`batch_first` 不改变隐藏状态的维度顺序。省略 `hx` 使用零状态。
+- 参数为 `weight_ih_l0`、`weight_hh_l0`、`bias_ih_l0`、`bias_hh_l0`，权重形状分别为
+  `(hidden_size, input_size)` 和 `(hidden_size, hidden_size)`。所有参数均匀初始化到
+  `[-1/sqrt(hidden_size), 1/sqrt(hidden_size)]`；`reset_parameters()` 可重新初始化。
+- 支持 `nonlinearity="tanh"` 或 `"relu"`，`bias=False` 可关闭两个偏置。
+  空序列、特征维度错误和隐藏状态形状不匹配会报错。
+
+当前仅实现 `num_layers=1`，其他层数明确抛出 `NotImplementedError`。暂不支持
+双向、dropout、PackedSequence、device/dtype 参数；数值类型沿用 Tensor 的 float64。
+这是 PyTorch 接口的教学子集。
+
+```python
+import numpy as np
+from minitorch import Tensor, nn
+
+model = nn.RNN(input_size=3, hidden_size=5, batch_first=True)
+x = Tensor(np.random.randn(2, 4, 3), requires_grad=True)
+h0 = Tensor(np.zeros((1, 2, 5)), requires_grad=True)
+output, h_n = model(input=x, hx=h0)
+print(output.shape)  # (2, 4, 5)
+print(h_n.shape)     # (1, 2, 5)
+(output ** 2).mean().backward()
+print(x.grad.shape)  # (2, 4, 3)
+```
+
+RNN 通过可求导的 `Tensor.select(dim, index)` 选取时间步，并用
+`minitorch.stack(tensors, dim=0)` 堆叠输出。前者反向将梯度写回原切片，后者将梯度
+分给各输入；整个循环保留计算图。参数跨时间步共享和 `output`、`h_n` 的梯度汇合
+均由现有 autograd engine 处理。

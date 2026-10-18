@@ -7,7 +7,7 @@ from .autograd.graph import FunctionNode
 from .ops.arithmetic import Add, Mul, Neg, Pow
 from .ops.linalg import MatMul
 from .ops.reductions import Sum, Mean
-from .ops.shape import Reshape, Transpose, _normalize_dim
+from .ops.shape import Reshape, Transpose, Select, Stack, _normalize_dim
 
 
 class Tensor:
@@ -48,6 +48,10 @@ class Tensor:
     def transpose(self, dim0, dim1):
         """交换两个维度，反向传播时将梯度交换回原维度。"""
         return Transpose.apply(self, dim0=dim0, dim1=dim1)
+
+    def select(self, dim, index):
+        """沿 dim 选取 index 处的切片并移除该维度，支持负编号。"""
+        return Select.apply(self, dim=dim, index=index)
 
     @staticmethod
     def _ensure_tensor(value):
@@ -115,3 +119,12 @@ class Tensor:
         from .autograd import backward
 
         return backward(self, gradient)
+
+
+def stack(tensors, dim=0):
+    """沿新增维度堆叠非空 Tensor 列表或元组，保留计算图。"""
+    if not isinstance(tensors, (list, tuple)):
+        raise TypeError("tensors 必须是 Tensor 列表或元组")
+    if any(not isinstance(tensor, Tensor) for tensor in tensors):
+        raise TypeError("stack 的每个输入必须是 Tensor")
+    return Stack.apply(*tensors, dim=dim)

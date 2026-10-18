@@ -3,7 +3,8 @@
 from .arithmetic import Add, Mul, Neg, Pow
 from .linalg import MatMul
 from .reductions import Sum, Mean
-from .activation import ReLU
-from .shape import Reshape, Transpose
+from .activation import ReLU, Tanh
+from .shape import Reshape, Transpose, Select, Stack
 
-__all__ = ["Add", "Mul", "Neg", "Pow", "MatMul", "Sum", "Mean", "ReLU", "Reshape", "Transpose"]
+__all__ = ["Add", "Mul", "Neg", "Pow", "MatMul", "Sum", "Mean", "ReLU", "Tanh",
+           "Reshape", "Transpose", "Select", "Stack"]

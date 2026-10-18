@@ -2,6 +2,6 @@
 
 from .parameter import Parameter
 from . import functional
-from .modules import Module, Linear, ReLU, Sequential
+from .modules import Module, Linear, ReLU, Tanh, Sequential, RNN
 
-__all__ = ["Parameter", "Module", "Linear", "ReLU", "Sequential", "functional"]
+__all__ = ["Parameter", "Module", "Linear", "ReLU", "Tanh", "Sequential", "RNN", "functional"]
