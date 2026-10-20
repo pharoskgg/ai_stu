@@ -11,7 +11,8 @@ minitorch/
 ├── __init__.py               # 导出 Tensor、nn、optim
 ├── tensor.py                 # 数据、梯度状态、运算符及 backward 入口
 ├── nn/
-│   ├── __init__.py            # 导出 Parameter、Module、Linear、ReLU、Tanh、Sequential、RNN、functional
+│   ├── __init__.py            # 导出 Parameter、网络模块、CrossEntropyLoss、functional
+│   ├── _reduction.py          # 损失归约与旧参数兼容
 │   ├── parameter.py           # 默认需要梯度的叶子 Tensor
 │   ├── functional.py          # 无参数网络函数，如 relu
 │   └── modules/
@@ -20,6 +21,7 @@ minitorch/
 │       ├── linear.py          # 全连接层，组合矩阵乘法和加法
 │       ├── activation.py      # ReLU、Tanh 模块，调用 functional
 │       ├── rnn.py             # 单层单向 RNN，返回序列输出和最终状态
+│       ├── loss.py            # _Loss、_WeightedLoss 和 CrossEntropyLoss
 │       └── container.py       # Sequential，按注册顺序串联模块
 ├── optim/
 │   ├── __init__.py            # 导出 Optimizer、SGD
@@ -31,7 +33,8 @@ minitorch/
 │   ├── linalg.py              # MatMul
 │   ├── reductions.py          # Sum、Mean
 │   ├── shape.py               # Reshape、Transpose、Select、Stack 及维度校验
-│   └── activation.py          # ReLU、Tanh 前向及局部反向
+│   ├── activation.py          # ReLU、Tanh 前向及局部反向
+│   └── loss.py                # 交叉熵的稳定前向及局部反向
 └── autograd/
     ├── __init__.py            # 公开 backward、Context、Function
     ├── function.py            # Context 和 Function.apply：前向执行与建图
@@ -405,3 +408,73 @@ RNN 通过可求导的 `Tensor.select(dim, index)` 选取时间步，并用
 `minitorch.stack(tensors, dim=0)` 堆叠输出。前者反向将梯度写回原切片，后者将梯度
 分给各输入；整个循环保留计算图。参数跨时间步共享和 `output`、`h_n` 的梯度汇合
 均由现有 autograd engine 处理。
+
+## 损失基类与交叉熵
+
+损失模块沿用 [PyTorch 损失模块](https://github.com/pytorch/pytorch/blob/main/torch/nn/modules/loss.py)
+的继承结构：`Module → _Loss → _WeightedLoss → CrossEntropyLoss`。
+内部基类位于 `nn/modules/loss.py`；`_Loss` 统一管理 `reduction`，
+`_WeightedLoss` 将类别权重注册为 buffer。公开使用 `nn.CrossEntropyLoss`，
+或者 `nn.functional.cross_entropy`。
+
+调用链为 `CrossEntropyLoss.forward → functional.cross_entropy → ops.CrossEntropy.apply`。
+算子先减去各位置 logits 的最大值，再计算 log-softmax 和交叉熵，避免直接对大
+logits 求指数溢出。输入应为未归一化 logits；反向传播复用现有 autograd engine。
+
+接口参考 [PyTorch CrossEntropyLoss](https://docs.pytorch.org/docs/stable/generated/torch.nn.CrossEntropyLoss.html)：
+
+```python
+nn.CrossEntropyLoss(weight=None, size_average=None, ignore_index=-100,
+                    reduce=None, reduction="mean", label_smoothing=0.0)
+nn.functional.cross_entropy(input, target, weight=None, size_average=None,
+                            ignore_index=-100, reduce=None, reduction="mean",
+                            label_smoothing=0.0)
+```
+
+- 输入支持 `(C,)`、`(N, C)` 或 `(N, C, d1, ..., dk)`；类别轴为单样本的第 0 维、
+  有批次输入的第 1 维。类别数须大于零。
+- 类别索引目标的形状为 `()`、`(N,)` 或 `(N, d1, ..., dk)`。当前 Tensor 统一使用
+  float64，标签以整数值存储并校验，拒绝小数、非有限值和非忽略位置的越界索引。
+  这与 PyTorch 使用 long 标签的 dtype 接口仍有差异。
+- 概率目标与输入同形状，支持软标签和 one-hot 标签；与 PyTorch 一致，不强制检查
+  非负性或归一化。`ignore_index` 仅作用于类别索引目标，概率目标须保持负值的
+  `ignore_index` 配置。
+- `weight` 为 `(C,)` 的 Tensor。类别索引目标的 `mean` 除以未忽略目标的类别权重
+  总和；概率目标的 `mean` 除以样本位置数。`sum` 返回总和，`none` 返回移除类别轴
+  后的形状。旧参数 `size_average/reduce` 会覆盖 `reduction` 并发出弃用警告。
+- `label_smoothing` 在 `[0, 1]` 中，将目标分布与类别上的均匀分布混合。
+- 类别索引目标及其类别权重不支持梯度；概率目标支持输入、目标与类别权重的梯度。
+  前向保存独立数据快照，之后修改原 Tensor 数据不会改变该次反向的计算依据。
+- 空输入或所有标签被忽略时，`sum` 为零，`mean` 为 NaN；忽略位置的输入梯度为零。
+  有效目标权重总和为零时，`mean` 可能出现 NaN/Inf，保留该边界行为。
+
+Module 提供 `register_buffer(name, tensor, persistent=True)`、
+`named_buffers(prefix="", recurse=True, remove_duplicate=True)` 和 `buffers(recurse=True)`。
+buffer 可为 Tensor 或 None，默认递归遍历并去重，不计入 `parameters()`，因此优化器
+不会自动更新损失类别权重。已有 buffer 赋值和删除会同步注册信息；普通 Tensor
+属性不会自动注册。`persistent` 记录持久化标记，当前包尚未实现 `state_dict`。
+
+在 `06autograde/01lesson` 下运行：
+
+```python
+from minitorch import Tensor, nn, optim
+
+x = Tensor([[-2., -1.], [-1., -2.], [2., -1.], [1., -2.], [0., 2.], [1., 3.]])
+target = Tensor([0, 0, 1, 1, 2, 2])
+model = nn.Linear(2, 3)
+criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
+optimizer = optim.SGD(model.parameters(), lr=0.2)
+
+for _ in range(100):
+    optimizer.zero_grad()
+    loss = criterion(model(x), target)
+    loss.backward()
+    optimizer.step()
+
+print(float(loss.data))
+print(model(x).data.argmax(axis=1))  # [0 0 1 1 2 2]
+```
+
+测试覆盖模块/functional/算子的一致性、各维度与归约方式、权重与忽略位置、
+标签平滑、软目标及权重的有限差分梯度、极端 logits、空输入、前向快照、共享路径、
+旧参数兼容、buffer 管理以及完整分类训练。

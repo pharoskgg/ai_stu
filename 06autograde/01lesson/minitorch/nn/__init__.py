@@ -2,6 +2,6 @@
 
 from .parameter import Parameter
 from . import functional
-from .modules import Module, Linear, ReLU, Tanh, Sequential, RNN
+from .modules import Module, Linear, ReLU, Tanh, Sequential, RNN, CrossEntropyLoss
 
-__all__ = ["Parameter", "Module", "Linear", "ReLU", "Tanh", "Sequential", "RNN", "functional"]
+__all__ = ["Parameter", "Module", "Linear", "ReLU", "Tanh", "Sequential", "RNN", "CrossEntropyLoss", "functional"]

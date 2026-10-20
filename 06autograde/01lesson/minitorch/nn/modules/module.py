@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from ...tensor import Tensor
 from ..parameter import Parameter
 
 
@@ -11,6 +12,8 @@ class Module:
     def __init__(self):
         self._parameters: dict[str, Parameter | None] = {}
         self._modules: dict[str, Module | None] = {}
+        self._buffers: dict[str, Tensor | None] = {}
+        self._non_persistent_buffers_set: set[str] = set()
         self.training = True
 
     def forward(self, *args, **kwargs):
@@ -21,7 +24,7 @@ class Module:
 
     def __getattr__(self, name):
         # 注册对象仅存放在对应字典中，避免属性与注册信息不同步。
-        for registry_name in ("_parameters", "_modules"):
+        for registry_name in ("_parameters", "_modules", "_buffers"):
             registry = self.__dict__.get(registry_name, {})
             if name in registry:
                 return registry[name]
@@ -30,6 +33,7 @@ class Module:
     def __setattr__(self, name, value):
         parameters = self.__dict__.get("_parameters")
         modules = self.__dict__.get("_modules")
+        buffers = self.__dict__.get("_buffers")
         if isinstance(value, Parameter):
             self._register_parameter(name, value, replace_attribute=True)
         elif parameters is not None and name in parameters:
@@ -42,14 +46,18 @@ class Module:
             if value is not None:
                 raise TypeError(f"子模块 {name!r} 只能赋值为 Module 或 None")
             self.add_module(name, value)
+        elif buffers is not None and name in buffers:
+            self.register_buffer(name, value, persistent=name not in self._non_persistent_buffers_set)
         else:
             object.__setattr__(self, name, value)
 
     def __delattr__(self, name):
-        for registry_name in ("_parameters", "_modules"):
+        for registry_name in ("_parameters", "_modules", "_buffers"):
             registry = self.__dict__.get(registry_name, {})
             if name in registry:
                 del registry[name]
+                if registry_name == "_buffers":
+                    self._non_persistent_buffers_set.discard(name)
                 return
         object.__delattr__(self, name)
 
@@ -58,7 +66,7 @@ class Module:
             raise TypeError("注册名称必须是字符串")
         if not name or "." in name:
             raise KeyError("注册名称不能为空或包含 '.'")
-        if name in ("_parameters", "_modules", "training") or hasattr(type(self), name):
+        if name in ("_parameters", "_modules", "_buffers", "_non_persistent_buffers_set", "training") or hasattr(type(self), name):
             raise KeyError(f"注册名称 {name!r} 与模块已有接口冲突")
         if not replace_attribute and hasattr(self, name) and name not in registry:
             raise KeyError(f"属性 {name!r} 已存在")
@@ -77,6 +85,8 @@ class Module:
         if replace_attribute:
             self.__dict__.pop(name, None)
             self._modules.pop(name, None)
+            self._buffers.pop(name, None)
+            self._non_persistent_buffers_set.discard(name)
         parameters[name] = param
 
     def register_parameter(self, name: str, param: Parameter | None):
@@ -95,11 +105,48 @@ class Module:
                 raise ValueError("子模块不能包含自身或祖先模块")
         if replace_attribute:
             self.__dict__.pop(name, None)
+            self._buffers.pop(name, None)
+            self._non_persistent_buffers_set.discard(name)
         modules[name] = module
 
     def add_module(self, name: str, module: Module | None):
         """显式注册子模块，参数遍历和模式切换会递归进入它。"""
         self._register_module(name, module)
+
+    def register_buffer(self, name: str, tensor: Tensor | None, persistent: bool = True):
+        """注册非参数 Tensor；persistent 记录其未来是否进入 state_dict。"""
+        buffers = self.__dict__.get("_buffers")
+        if buffers is None:
+            raise AttributeError("注册 buffer 前必须调用 Module.__init__()")
+        self._check_registration_name(name, buffers, replace_attribute=False)
+        if tensor is not None and not isinstance(tensor, Tensor):
+            raise TypeError("buffer 必须是 Tensor 或 None")
+        if not isinstance(persistent, bool):
+            raise TypeError("persistent 必须是 bool")
+        buffers[name] = tensor
+        if persistent:
+            self._non_persistent_buffers_set.discard(name)
+        else:
+            self._non_persistent_buffers_set.add(name)
+
+    def named_buffers(self, prefix: str = "", recurse: bool = True,
+                      remove_duplicate: bool = True):
+        """按注册顺序遍历 buffer，默认递归并对共享对象去重。"""
+        modules = (self.named_modules(prefix=prefix, remove_duplicate=remove_duplicate)
+                   if recurse else ((prefix, self),))
+        visited = set()
+        for module_prefix, module in modules:
+            for name, buffer in module._buffers.items():
+                if buffer is None or (remove_duplicate and id(buffer) in visited):
+                    continue
+                visited.add(id(buffer))
+                full_name = f"{module_prefix}.{name}" if module_prefix else name
+                yield full_name, buffer
+
+    def buffers(self, recurse: bool = True):
+        """遍历 buffer；它们不会出现在 parameters() 中。"""
+        for _, buffer in self.named_buffers(recurse=recurse):
+            yield buffer
 
     def named_parameters(self, prefix: str = "", recurse: bool = True,
                          remove_duplicate: bool = True):
