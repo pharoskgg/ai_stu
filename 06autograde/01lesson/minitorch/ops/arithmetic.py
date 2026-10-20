@@ -67,7 +67,10 @@ class Pow(Function):
         grad_a = None
         grad_b = None
         if ctx.needs_input_grad[0]:
-            grad_a = sum_to_shape(grad_out * b * (a ** (b - 1)), a.shape)
+            # 零指数的底数梯度为零，跳过对应幂运算以避免 0 * 0**(-1)。
+            base_grad = np.zeros_like(grad_out)
+            np.power(a, b - 1, out=base_grad, where=b != 0)
+            grad_a = sum_to_shape(grad_out * b * base_grad, a.shape)
 
         if ctx.needs_input_grad[1]:
             if np.any(a <= 0):

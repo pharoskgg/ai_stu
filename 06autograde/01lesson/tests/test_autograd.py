@@ -5,6 +5,7 @@ from pathlib import Path
 import subprocess
 import sys
 import unittest
+import warnings
 
 import numpy as np
 
@@ -71,6 +72,48 @@ class AutogradBehaviorTests(unittest.TestCase):
         (a ** b).backward(np.ones(2))
         np.testing.assert_allclose(a.grad, [4., 6.])
         np.testing.assert_allclose(b.grad, np.sum(a.data ** 2 * np.log(a.data)))
+
+    def test_zero_power_at_zero_has_zero_gradient_without_warnings(self):
+        x = Tensor(0., requires_grad=True)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            y = x ** 0
+            y.backward()
+        np.testing.assert_array_equal(y.data, 1.)
+        np.testing.assert_array_equal(x.grad, 0.)
+        self.assertEqual(len(caught), 0)
+
+    def test_mixed_powers_broadcast_gradients_match_finite_differences(self):
+        data = np.array([[0.], [-2.], [3.]])
+        powers = np.array([[0., 1., 2., 3.]])
+        weights = np.array([[1., 2., 3., 4.],
+                            [-2., 1., 0.5, -1.],
+                            [3., -2., 1., 2.]])
+        x = Tensor(data, requires_grad=True)
+        loss = ((x ** Tensor(powers)) * Tensor(weights)).sum()
+        with np.errstate(divide="raise", invalid="raise"):
+            (loss + loss).backward()
+
+        numerical = np.empty_like(data)
+        epsilon = 1e-6
+        for index in np.ndindex(data.shape):
+            plus, minus = data.copy(), data.copy()
+            plus[index] += epsilon
+            minus[index] -= epsilon
+            numerical[index] = (
+                2 * np.sum((plus ** powers) * weights)
+                - 2 * np.sum((minus ** powers) * weights)
+            ) / (2 * epsilon)
+        np.testing.assert_allclose(x.grad, numerical, rtol=1e-6, atol=1e-7)
+
+    def test_zero_scalar_base_broadcast_powers_accumulate_gradient(self):
+        x = Tensor(0., requires_grad=True)
+        y = x ** Tensor([0., 1., 2., 3.])
+        with np.errstate(divide="raise", invalid="raise"):
+            y.backward([4., 3., 2., 1.])
+        np.testing.assert_array_equal(y.data, [1., 0., 0., 0.])
+        np.testing.assert_array_equal(x.grad, 3.)
+        self.assertEqual(x.grad.shape, ())
 
     def test_matmul_and_batch_broadcast(self):
         a = Tensor(np.arange(12.).reshape(2, 2, 3), requires_grad=True)
