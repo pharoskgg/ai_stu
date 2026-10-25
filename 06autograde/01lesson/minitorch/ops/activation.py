@@ -35,3 +35,19 @@ class Tanh(Function):
         if ctx.needs_input_grad[0]:
             grad_input = grad_output * (1 - output ** 2)
         return (grad_input,)
+
+class Sigmoid(Function):
+
+    @staticmethod
+    def forward(ctx: Context, input):
+        output = 1 / (1 + np.exp(-input))
+        ctx.save_for_backward(output)
+        return output
+
+    @staticmethod
+    def backward(ctx: Context, grad_output):
+        output, = ctx.saved_values
+        grad_input = None
+        if ctx.needs_input_grad[0]:
+            grad_input = grad_output * output * (1 - output)
+        return (grad_input,)

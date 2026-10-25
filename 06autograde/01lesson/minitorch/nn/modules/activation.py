@@ -17,3 +17,9 @@ class Tanh(Module):
 
     def forward(self, input: Tensor) -> Tensor:
         return functional.tanh(input)
+
+class Sigmoid(Module):
+    """Sigmoid 层，逐元素计算并保留输入形状。"""
+
+    def forward(self, input: Tensor) -> Tensor:
+        return functional.sigmoid(input)

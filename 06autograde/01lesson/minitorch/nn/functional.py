@@ -1,10 +1,9 @@
 """无参数的网络函数接口，连接 Tensor 与底层算子。"""
 
-from ..ops.activation import ReLU, Tanh
+from ..ops.activation import ReLU, Tanh, Sigmoid
 from ..ops.loss import CrossEntropy
 from ..tensor import Tensor
 from ._reduction import resolve_reduction
-
 
 def relu(input: Tensor) -> Tensor:
     """逐元素取输入和零的最大值，保留输入形状。"""
@@ -14,6 +13,11 @@ def relu(input: Tensor) -> Tensor:
 def tanh(input: Tensor) -> Tensor:
     """逐元素计算双曲正切，通过 Tanh 算子保留计算图。"""
     return Tanh.apply(input)
+
+
+def sigmoid(input: Tensor) -> Tensor:
+    """逐元素计算 Sigmoid 函数，通过 Sigmoid 算子保留计算图。"""
+    return Sigmoid.apply(input)
 
 
 def cross_entropy(input: Tensor, target: Tensor, weight=None, size_average=None,
