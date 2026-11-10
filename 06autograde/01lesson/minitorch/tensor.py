@@ -4,6 +4,7 @@ from __future__ import annotations
 import numpy as np
 
 from .autograd.graph import FunctionNode
+from .dtypes import infer_dtype
 from .ops.arithmetic import Add, Mul, Neg, Pow
 from .ops.linalg import MatMul
 from .ops.reductions import Sum, Mean
@@ -11,11 +12,25 @@ from .ops.shape import Reshape, Transpose, Select, Stack, _normalize_dim
 
 
 class Tensor:
-    def __init__(self, data, requires_grad:bool = False, grad_fn:FunctionNode | None = None):
-        self.data: np.ndarray = np.array(data, dtype=np.float64, copy=True)
+    def __init__(self, data, requires_grad:bool = False, grad_fn:FunctionNode | None = None, dtype=None):
+        if isinstance(data, Tensor):
+            data = data.data
+
+        target_dtype = (infer_dtype(data) if dtype is None else dtype)
+        array = np.array(data, dtype=target_dtype, copy=True) # 转换成numpy数组，避免共享内存
+
+        if requires_grad and not np.issubdtype(array.dtype, np.floating):
+            raise RuntimeError("只有浮点 Tensor 可以设置 requires_grad=True")
+
+        self.data: np.ndarray = array
         self.requires_grad = requires_grad
         self.grad_fn = grad_fn
         self.grad: np.ndarray | None = None
+
+    @property
+    def dtype(self):
+        """返回数据类型。"""
+        return self.data.dtype
 
     @property
     def shape(self):
