@@ -6,6 +6,7 @@ from .reductions import Sum, Mean
 from .activation import ReLU, Tanh
 from .shape import Reshape, Transpose, Select, Stack
 from .loss import CrossEntropy
+from .embedding import Embedding
 
 __all__ = ["Add", "Mul", "Neg", "Pow", "MatMul", "Sum", "Mean", "ReLU", "Tanh",
-           "Reshape", "Transpose", "Select", "Stack", "CrossEntropy"]
+           "Reshape", "Transpose", "Select", "Stack", "CrossEntropy", "Embedding"]

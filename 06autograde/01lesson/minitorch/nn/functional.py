@@ -1,6 +1,7 @@
 """无参数的网络函数接口，连接 Tensor 与底层算子。"""
 
 from ..ops.activation import ReLU, Tanh, Sigmoid
+from ..ops.embedding import Embedding
 from ..ops.loss import CrossEntropy
 from ..tensor import Tensor
 from ._reduction import resolve_reduction
@@ -32,3 +33,10 @@ def cross_entropy(input: Tensor, target: Tensor, weight=None, size_average=None,
     inputs = (input, target) if weight is None else (input, target, weight)
     return CrossEntropy.apply(*inputs, ignore_index=ignore_index, reduction=reduction,
                               label_smoothing=label_smoothing)
+
+def embedding(input: Tensor, weight: Tensor) -> Tensor:
+    """根据输入索引选择权重矩阵中的行，返回嵌入向量。"""
+    for name, value in (("input", input), ("weight", weight)):
+        if not isinstance(value, Tensor):
+            raise TypeError(f"{name} 必须是 Tensor")
+    return Embedding.apply(input, weight)

@@ -5,6 +5,8 @@ from .linear import Linear
 from .activation import ReLU, Tanh
 from .container import Sequential
 from .rnn import RNN
+from .lstm import LSTM
+from .embedding import Embedding
 from .loss import CrossEntropyLoss
 
-__all__ = ["Module", "Linear", "ReLU", "Tanh", "Sequential", "RNN", "CrossEntropyLoss"]
+__all__ = ["Module", "Linear", "ReLU", "Tanh", "Sequential", "RNN", "CrossEntropyLoss", "Embedding", "LSTM"]
